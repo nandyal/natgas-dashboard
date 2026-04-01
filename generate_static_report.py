@@ -366,17 +366,16 @@ def html_page(df: pd.DataFrame, release: dict) -> str:
       {inventory_history_chart(df)}
     </section>
 
-    <section class="two-up">
-      <div class="panel">
-        <h2>Seasonal position</h2>
-        <p>This chart compares the current year with the historical weekly storage range and average.</p>
-        {seasonality_chart(df)}
-      </div>
-      <div class="panel">
-        <h2>Lower 48 summary table</h2>
-        <p>This table summarizes the latest total storage level against last week, the same point last year, and the rolling one-year average.</p>
-        {lower48_table(df)}
-      </div>
+    <section class="panel">
+      <h2>Seasonal position</h2>
+      <p>This chart compares the current year with the historical weekly storage range and average.</p>
+      {seasonality_chart(df)}
+    </section>
+
+    <section class="panel">
+      <h2>Lower 48 summary table</h2>
+      <p>This table summarizes the latest total storage level against last week, the same point last year, and the rolling one-year average.</p>
+      {lower48_table(df)}
     </section>
 
     <section class="panel">
