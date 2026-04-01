@@ -262,7 +262,9 @@ def monthly_returns_table(close: pd.DataFrame) -> str:
     for ticker in MONTHLY_RETURN_TICKERS:
         if ticker not in monthly.columns:
             continue
-        frame = calendar_return_table(monthly[ticker]).head(3).fillna("")
+        frame = calendar_return_table(monthly[ticker])
+        frame = frame[(frame.index >= 2020) & (frame.index <= 2026)]
+        frame = frame.sort_index(ascending=True).fillna("")
         header = "".join(f"<th>{col}</th>" for col in ["Year", *frame.columns.tolist()])
         rows = ""
         for year, values in frame.iterrows():
