@@ -9,8 +9,16 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from dashboard_data import (
+    DEFAULT_TICKERS,
+    PORTFOLIO_TICKERS,
+    build_equal_weight_portfolio,
+    calendar_return_table,
+    correlation_matrix,
+    fetch_market_prices,
     inventory_decomposition,
     load_inventory_data,
+    monthly_returns,
+    normalized_prices,
     seasonal_inventory_profile,
     summarize_inventory,
 )
@@ -176,6 +184,104 @@ def decomposition_chart(df: pd.DataFrame) -> str:
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
+def normalized_prices_chart(close: pd.DataFrame) -> str:
+    norm = normalized_prices(close)
+    fig = go.Figure()
+    palette = ["#0f766e", "#1d4ed8", "#b45309", "#7c3aed", "#dc2626", "#4d7c0f", "#0891b2", "#a16207"]
+    for idx, column in enumerate(norm.columns):
+        fig.add_trace(
+            go.Scatter(
+                x=norm.index,
+                y=norm[column],
+                mode="lines",
+                name=column,
+                line=dict(width=2, color=palette[idx % len(palette)]),
+            )
+        )
+    fig.update_layout(
+        title="Normalized prices",
+        template="plotly_white",
+        height=440,
+        margin=dict(l=20, r=20, t=60, b=20),
+        yaxis_title="Indexed to 100",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def correlation_chart(close: pd.DataFrame) -> str:
+    corr = correlation_matrix(close).round(2)
+    heat = go.Figure(
+        data=go.Heatmap(
+            z=corr.values,
+            x=corr.columns,
+            y=corr.index,
+            colorscale="RdBu",
+            zmin=-1,
+            zmax=1,
+            text=corr.values,
+            texttemplate="%{text:.2f}",
+            hovertemplate="%{y} vs %{x}: %{z:.2f}<extra></extra>",
+        )
+    )
+    heat.update_layout(
+        title="Return correlation matrix",
+        template="plotly_white",
+        height=520,
+        margin=dict(l=20, r=20, t=60, b=20),
+    )
+    return heat.to_html(full_html=False, include_plotlyjs=False)
+
+
+def portfolio_chart(close: pd.DataFrame) -> str:
+    portfolio = build_equal_weight_portfolio(close, PORTFOLIO_TICKERS)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=portfolio.index,
+            y=portfolio["portfolio_index"],
+            mode="lines",
+            name="Equal-weight portfolio",
+            line=dict(color="#0f766e", width=3),
+        )
+    )
+    fig.update_layout(
+        title="Portfolio performance",
+        template="plotly_white",
+        height=420,
+        margin=dict(l=20, r=20, t=60, b=20),
+        yaxis_title="Indexed to 100",
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def monthly_returns_table(close: pd.DataFrame) -> str:
+    monthly = monthly_returns(close)
+    tables = []
+    for ticker in monthly.columns:
+        frame = calendar_return_table(monthly[ticker]).head(3).fillna("")
+        header = "".join(f"<th>{col}</th>" for col in ["Year", *frame.columns.tolist()])
+        rows = ""
+        for year, values in frame.iterrows():
+            cells = "".join(
+                f"<td>{value:.1f}%</td>" if value != "" else "<td></td>"
+                for value in values.tolist()
+            )
+            rows += f"<tr><td>{year}</td>{cells}</tr>"
+        tables.append(
+            f"""
+            <div class="mini-table">
+              <h3>{ticker}</h3>
+              <table>
+                <thead><tr>{header}</tr></thead>
+                <tbody>{rows}</tbody>
+              </table>
+            </div>
+            """
+        )
+    return '<div class="mini-grid">' + "".join(tables) + "</div>"
+
+
 def lower48_table(df: pd.DataFrame) -> str:
     latest = df.iloc[-1]
     prev = df.iloc[-2]
@@ -248,7 +354,7 @@ def regional_table(release: dict) -> str:
     """
 
 
-def html_page(df: pd.DataFrame, release: dict) -> str:
+def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> str:
     summary = summarize_inventory(df)
     refreshed = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return f"""<!doctype html>
@@ -327,6 +433,15 @@ def html_page(df: pd.DataFrame, release: dict) -> str:
       gap: 18px;
       grid-template-columns: 1fr;
     }}
+    .mini-grid {{
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }}
+    .mini-table h3 {{
+      font-size: 1rem;
+      margin-bottom: 10px;
+    }}
     table {{
       width: 100%;
       border-collapse: collapse;
@@ -389,6 +504,27 @@ def html_page(df: pd.DataFrame, release: dict) -> str:
       <p>This table summarizes the latest weekly storage release by reporting region. All storage values are shown in billion cubic feet.</p>
       {regional_table(release)}
     </section>
+
+    <section class="panel">
+      <h2>Market and portfolio</h2>
+      <p>This section extends the original R workflow with normalized market prices, return correlations, an equal-weight gas equity portfolio, and recent monthly return tables.</p>
+      {normalized_prices_chart(market_close)}
+    </section>
+
+    <section class="two-up">
+      <div class="panel">
+        {correlation_chart(market_close)}
+      </div>
+      <div class="panel">
+        {portfolio_chart(market_close)}
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Monthly returns</h2>
+      <p>Recent calendar-style monthly return tables for the tracked natural gas contract, equities, and ETFs.</p>
+      {monthly_returns_table(market_close)}
+    </section>
   </main>
 </body>
 </html>
@@ -399,7 +535,8 @@ def main() -> int:
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     df = load_inventory_data(BASE_DIR)
     release = latest_release_payload()
-    REPORT_PATH.write_text(html_page(df, release), encoding="utf-8")
+    market_close = fetch_market_prices(DEFAULT_TICKERS, start="2019-01-01")
+    REPORT_PATH.write_text(html_page(df, release, market_close), encoding="utf-8")
     print(f"Wrote {REPORT_PATH}")
     return 0
 
