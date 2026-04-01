@@ -436,11 +436,14 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
     .mini-grid {{
       display: grid;
       gap: 16px;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      grid-template-columns: 1fr;
     }}
     .mini-table h3 {{
       font-size: 1rem;
       margin-bottom: 10px;
+    }}
+    .mini-table {{
+      overflow-x: auto;
     }}
     table {{
       width: 100%;
@@ -461,6 +464,9 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
     }}
     @media (min-width: 900px) {{
       .two-up {{
+        grid-template-columns: 1fr 1fr;
+      }}
+      .mini-grid {{
         grid-template-columns: 1fr 1fr;
       }}
     }}
@@ -507,7 +513,7 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
 
     <section class="panel">
       <h2>Market and portfolio</h2>
-      <p>This section extends the original R workflow with normalized market prices, return correlations, an equal-weight gas equity portfolio, and recent monthly return tables.</p>
+      <p>In this section, selected US Natural gas based company stocks, Natural Gas Fund ETF, US Oil Fund ETF normalized prices, correlation of their returns, returns of equal weighted equity portfolio and monthly returns tables are analysed.</p>
       {normalized_prices_chart(market_close)}
     </section>
 
