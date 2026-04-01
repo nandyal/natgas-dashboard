@@ -55,6 +55,7 @@ The compose setup mounts this project folder into the container, so refreshed CS
 - Rotate the old EIA API key because it was exposed in this chat session.
 - Store the replacement key in a local `.env` file created from `.env.example`.
 - `.env` is ignored by git, so the live key stays out of version control.
+- GitHub Actions in this repo do not use the EIA API key. If you later automate refreshes in GitHub, store the key as a GitHub Actions secret and never commit it to the repository.
 
 ## Current dashboard coverage
 
