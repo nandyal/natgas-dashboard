@@ -7,6 +7,7 @@ This project now includes a Python dashboard that recreates the main natural gas
 - `refresh_eia_ng_inventory.py`: refreshes the EIA weekly Lower 48 storage series and rewrites the local CSV/JSON files
 - `dashboard_data.py`: reusable inventory and market data helpers
 - `app.py`: Streamlit dashboard
+- `generate_static_report.py`: builds a static GitHub Pages report into `docs/index.html`
 - `eia_ng_total_inventory_last_10_years.csv`: local EIA weekly inventory history
 
 ## Setup
@@ -27,6 +28,14 @@ python refresh_eia_ng_inventory.py
 ```powershell
 streamlit run app.py
 ```
+
+## Build the GitHub Pages report locally
+
+```powershell
+python generate_static_report.py
+```
+
+This writes the static report to `docs/index.html`.
 
 ## Docker
 
@@ -56,6 +65,7 @@ The compose setup mounts this project folder into the container, so refreshed CS
 - Store the replacement key in a local `.env` file created from `.env.example`.
 - `.env` is ignored by git, so the live key stays out of version control.
 - GitHub Actions in this repo do not use the EIA API key. If you later automate refreshes in GitHub, store the key as a GitHub Actions secret and never commit it to the repository.
+- The GitHub Pages workflow only builds the static report from files already in the repository. It does not use your EIA API key.
 
 ## Current dashboard coverage
 
@@ -63,6 +73,7 @@ The compose setup mounts this project folder into the container, so refreshed CS
 - 10-year seasonal inventory range and current-year comparison
 - Seasonal naive inventory forecast
 - Inventory decomposition
+- Static GitHub Pages report in `docs/index.html`
 - Natural gas and related equities/ETF market tracking from Yahoo Finance
 - Equal-weight natural gas equity portfolio view
 - Correlation heatmap
