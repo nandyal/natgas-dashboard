@@ -380,7 +380,7 @@ def html_page(df: pd.DataFrame, release: dict) -> str:
 
     <section class="panel">
       <h2>Decomposition</h2>
-      <p>This mirrors the classic decomposition view from the earlier R analysis by splitting the series into observed, trend, seasonal, and random components.</p>
+      <p>The inventory observed series is split into longterm trend, sesonal change and random shifts.</p>
       {decomposition_chart(df)}
     </section>
 
