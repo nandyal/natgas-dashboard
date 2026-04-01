@@ -513,7 +513,7 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
 
     <section class="panel">
       <h2>Market and portfolio</h2>
-      <p>In this section, selected US Natural gas based company stocks, Natural Gas Fund ETF, US Oil Fund ETF normalized prices, correlation of their returns, returns of equal weighted equity portfolio and monthly returns tables are analysed.</p>
+      <p>In this section, selected US Natural gas based company stocks, Natural Gas Fund ETF, US Oil Fund ETF normalized prices, correlation of their returns, returns of equal weighted equity portfolio and monthly returns tables are analysed. The Source for stocks and ETF data is Yahoo Finance.</p>
       {normalized_prices_chart(market_close)}
     </section>
 
