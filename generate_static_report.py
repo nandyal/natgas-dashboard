@@ -28,7 +28,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DOCS_DIR = BASE_DIR / "docs"
 REPORT_PATH = DOCS_DIR / "index.html"
 LATEST_JSON = BASE_DIR / "weekly_natural_gas_inventory_2026-03-20.json"
-MONTHLY_RETURN_TICKERS = ["NG=F", "UNG", "USC"]
+MONTHLY_RETURN_TICKERS = ["NG=F", "UNG", "USO"]
 
 
 def latest_release_payload() -> dict:
