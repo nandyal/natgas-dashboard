@@ -1,0 +1,24 @@
+services:
+  natgas-dashboard:
+    build:
+      context: .
+    container_name: natgas-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      EIA_API_KEY: ${EIA_API_KEY:-}
+    volumes:
+      - .:/app
+    command: streamlit run app.py
+
+  natgas-refresh:
+    build:
+      context: .
+    container_name: natgas-refresh
+    environment:
+      EIA_API_KEY: ${EIA_API_KEY:-}
+    volumes:
+      - .:/app
+    command: python refresh_eia_ng_inventory.py
+    profiles:
+      - refresh
