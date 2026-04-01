@@ -28,6 +28,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DOCS_DIR = BASE_DIR / "docs"
 REPORT_PATH = DOCS_DIR / "index.html"
 LATEST_JSON = BASE_DIR / "weekly_natural_gas_inventory_2026-03-20.json"
+MONTHLY_RETURN_TICKERS = ["NG=F", "UNG", "USC"]
 
 
 def latest_release_payload() -> dict:
@@ -258,7 +259,9 @@ def portfolio_chart(close: pd.DataFrame) -> str:
 def monthly_returns_table(close: pd.DataFrame) -> str:
     monthly = monthly_returns(close)
     tables = []
-    for ticker in monthly.columns:
+    for ticker in MONTHLY_RETURN_TICKERS:
+        if ticker not in monthly.columns:
+            continue
         frame = calendar_return_table(monthly[ticker]).head(3).fillna("")
         header = "".join(f"<th>{col}</th>" for col in ["Year", *frame.columns.tolist()])
         rows = ""
@@ -466,9 +469,6 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
       .two-up {{
         grid-template-columns: 1fr 1fr;
       }}
-      .mini-grid {{
-        grid-template-columns: 1fr 1fr;
-      }}
     }}
   </style>
 </head>
@@ -541,7 +541,8 @@ def main() -> int:
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     df = load_inventory_data(BASE_DIR)
     release = latest_release_payload()
-    market_close = fetch_market_prices(DEFAULT_TICKERS, start="2019-01-01")
+    market_tickers = list(dict.fromkeys(DEFAULT_TICKERS + MONTHLY_RETURN_TICKERS))
+    market_close = fetch_market_prices(market_tickers, start="2019-01-01")
     REPORT_PATH.write_text(html_page(df, release, market_close), encoding="utf-8")
     print(f"Wrote {REPORT_PATH}")
     return 0
