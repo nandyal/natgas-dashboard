@@ -12,7 +12,7 @@ from dashboard_data import (
     PORTFOLIO_TICKERS,
     DEFAULT_TICKERS,
     available_tickers,
-    build_equal_weight_portfolio,
+    build_optimized_portfolio,
     calendar_return_table,
     correlation_matrix,
     fetch_market_prices,
@@ -208,7 +208,7 @@ available_market, missing_market = available_tickers(market, DEFAULT_TICKERS)
 available_portfolio, missing_portfolio = available_tickers(market, PORTFOLIO_TICKERS)
 norm = normalized_prices(market)
 monthly = monthly_returns(market)
-portfolio = build_equal_weight_portfolio(market, PORTFOLIO_TICKERS)
+portfolio = build_optimized_portfolio(market, PORTFOLIO_TICKERS)
 correlation = correlation_matrix(market[available_market].dropna())
 
 if missing_market:
@@ -243,18 +243,32 @@ with market_tabs[2]:
     port_chart = go.Figure()
     port_chart.add_trace(
         go.Scatter(
-            x=portfolio.index,
-            y=portfolio["portfolio_index"],
+            x=portfolio.index.index,
+            y=portfolio.index.values,
             mode="lines",
-            name="Equal-weight portfolio",
+            name="Optimized portfolio",
             line=dict(color="#0d6e6e", width=3),
         )
     )
-    port_chart.update_layout(height=420, margin=dict(l=20, r=20, t=40, b=20), yaxis_title="Indexed to 100")
+    port_chart.update_layout(
+        title="Optimized portfolio performance",
+        height=420,
+        margin=dict(l=20, r=20, t=50, b=20),
+        yaxis_title="Indexed to 100",
+    )
     st.plotly_chart(port_chart, width="stretch")
 
-    rolling_vol = portfolio["portfolio_return"].rolling(63).std() * (252 ** 0.5)
+    rolling_vol = portfolio.returns.rolling(63).std() * (252 ** 0.5)
     st.line_chart(rolling_vol.rename("63-day rolling volatility"))
+    st.dataframe(
+        portfolio.weights.rename("weight").mul(100).round(1).to_frame(),
+        width="stretch",
+    )
+    st.caption(
+        f"Optimized portfolio metrics: annualized return {portfolio.annual_return * 100:.1f}%, "
+        f"annualized volatility {portfolio.annual_volatility * 100:.1f}%, "
+        f"Sharpe ratio {portfolio.sharpe_ratio:.2f}."
+    )
     if missing_portfolio:
         st.caption(f"Portfolio currently excludes unavailable tickers: {', '.join(missing_portfolio)}")
 

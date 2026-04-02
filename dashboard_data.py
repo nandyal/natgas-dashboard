@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+from scipy.optimize import minimize
 import yfinance as yf
 from statsmodels.tsa.seasonal import seasonal_decompose
 
 
 INVENTORY_CSV = "eia_ng_total_inventory_last_10_years.csv"
 DEFAULT_TICKERS = ["NG=F", "RRC", "AR", "EQT", "CNX", "UNG", "USO", "FTI"]
-PORTFOLIO_TICKERS = ["RRC", "AR", "EQT", "CNX"]
+PORTFOLIO_TICKERS = ["RRC", "AR", "EQT", "CNX", "UNG", "USO"]
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,16 @@ class InventorySummary:
     weekly_change: float
     trailing_year_low: float
     trailing_year_high: float
+
+
+@dataclass(frozen=True)
+class PortfolioSummary:
+    weights: pd.Series
+    returns: pd.Series
+    index: pd.Series
+    annual_return: float
+    annual_volatility: float
+    sharpe_ratio: float
 
 
 def load_inventory_data(base_dir: Path) -> pd.DataFrame:
@@ -123,7 +134,12 @@ def correlation_matrix(close: pd.DataFrame) -> pd.DataFrame:
     return daily_returns(close).corr()
 
 
-def build_equal_weight_portfolio(close: pd.DataFrame, tickers: list[str] | None = None) -> pd.DataFrame:
+def build_optimized_portfolio(
+    close: pd.DataFrame,
+    tickers: list[str] | None = None,
+    risk_free_rate: float = 0.02,
+    max_weight: float = 0.45,
+) -> PortfolioSummary:
     tickers = tickers or PORTFOLIO_TICKERS
     available = [ticker for ticker in tickers if ticker in close.columns]
     if not available:
@@ -131,14 +147,47 @@ def build_equal_weight_portfolio(close: pd.DataFrame, tickers: list[str] | None 
 
     portfolio_close = close[available].dropna().copy()
     returns = portfolio_close.pct_change().dropna()
-    weights = pd.Series(1 / len(available), index=available)
+    annualized_returns = returns.mean() * 252
+    annualized_cov = returns.cov() * 252
+
+    n_assets = len(available)
+    start = [1 / n_assets] * n_assets
+    bounds = [(0.0, min(max_weight, 1.0))] * n_assets
+    constraints = [{"type": "eq", "fun": lambda w: sum(w) - 1}]
+
+    def negative_sharpe(weights: list[float]) -> float:
+        weights_series = pd.Series(weights, index=available)
+        portfolio_return = float((annualized_returns * weights_series).sum())
+        portfolio_vol = float((weights_series.T @ annualized_cov @ weights_series) ** 0.5)
+        if portfolio_vol == 0:
+            return 1e9
+        return -((portfolio_return - risk_free_rate) / portfolio_vol)
+
+    result = minimize(
+        negative_sharpe,
+        start,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+    )
+
+    if result.success:
+        weights = pd.Series(result.x, index=available)
+    else:
+        weights = pd.Series(start, index=available)
+
     portfolio_returns = returns.mul(weights, axis=1).sum(axis=1)
     cumulative = (1 + portfolio_returns).cumprod() * 100
-    return pd.DataFrame(
-        {
-            "portfolio_return": portfolio_returns,
-            "portfolio_index": cumulative,
-        }
+    annual_return = float(portfolio_returns.mean() * 252)
+    annual_volatility = float(portfolio_returns.std() * (252 ** 0.5))
+    sharpe_ratio = 0.0 if annual_volatility == 0 else float((annual_return - risk_free_rate) / annual_volatility)
+    return PortfolioSummary(
+        weights=weights.sort_values(ascending=False),
+        returns=portfolio_returns,
+        index=cumulative,
+        annual_return=annual_return,
+        annual_volatility=annual_volatility,
+        sharpe_ratio=sharpe_ratio,
     )
 
 

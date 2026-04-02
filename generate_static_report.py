@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 from dashboard_data import (
     DEFAULT_TICKERS,
     PORTFOLIO_TICKERS,
-    build_equal_weight_portfolio,
+    build_optimized_portfolio,
     calendar_return_table,
     correlation_matrix,
     fetch_market_prices,
@@ -235,25 +235,48 @@ def correlation_chart(close: pd.DataFrame) -> str:
 
 
 def portfolio_chart(close: pd.DataFrame) -> str:
-    portfolio = build_equal_weight_portfolio(close, PORTFOLIO_TICKERS)
+    portfolio = build_optimized_portfolio(close, PORTFOLIO_TICKERS)
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=portfolio.index,
-            y=portfolio["portfolio_index"],
+            x=portfolio.index.index,
+            y=portfolio.index.values,
             mode="lines",
-            name="Equal-weight portfolio",
+            name="Optimized portfolio",
             line=dict(color="#0f766e", width=3),
         )
     )
     fig.update_layout(
-        title="Portfolio performance",
+        title="Optimized portfolio performance",
         template="plotly_white",
         height=420,
         margin=dict(l=20, r=20, t=60, b=20),
         yaxis_title="Indexed to 100",
     )
     return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def portfolio_summary_html(close: pd.DataFrame) -> str:
+    portfolio = build_optimized_portfolio(close, PORTFOLIO_TICKERS)
+    weights = "".join(
+        f"<tr><td>{ticker}</td><td>{weight * 100:.1f}%</td></tr>"
+        for ticker, weight in portfolio.weights.items()
+    )
+    return f"""
+    <div class="weights-box">
+      <h3>Optimized allocation</h3>
+      <p class="small">Long-only weights chosen to maximize risk-adjusted return using historical daily returns across the selected stocks and ETFs.</p>
+      <table>
+        <thead>
+          <tr><th>Asset</th><th>Weight</th></tr>
+        </thead>
+        <tbody>{weights}</tbody>
+      </table>
+      <p class="small"><strong>Annualized return:</strong> {portfolio.annual_return * 100:.1f}%<br>
+      <strong>Annualized volatility:</strong> {portfolio.annual_volatility * 100:.1f}%<br>
+      <strong>Sharpe ratio:</strong> {portfolio.sharpe_ratio:.2f}</p>
+    </div>
+    """
 
 
 def monthly_returns_table(close: pd.DataFrame) -> str:
@@ -450,6 +473,13 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
     .mini-table {{
       overflow-x: auto;
     }}
+    .weights-box {{
+      margin-top: 14px;
+      padding-top: 6px;
+    }}
+    .small {{
+      font-size: 0.94rem;
+    }}
     table {{
       width: 100%;
       border-collapse: collapse;
@@ -515,7 +545,7 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
 
     <section class="panel">
       <h2>Market and portfolio</h2>
-      <p>In this section, selected US Natural gas based company stocks, Natural Gas Fund ETF, US Oil Fund ETF normalized prices, correlation of their returns, returns of equal weighted equity portfolio and monthly returns tables are analysed. The Source for stocks and ETF data is Yahoo Finance.</p>
+      <p>In this section, selected US Natural gas based company stocks, Natural Gas Fund ETF, US Oil Fund ETF normalized prices, correlation of their returns, returns of an optimized equity and ETF portfolio and monthly returns tables are analysed. The Source for stocks and ETF data is Yahoo Finance.</p>
       {normalized_prices_chart(market_close)}
     </section>
 
@@ -525,6 +555,7 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
       </div>
       <div class="panel">
         {portfolio_chart(market_close)}
+        {portfolio_summary_html(market_close)}
       </div>
     </section>
 
