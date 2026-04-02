@@ -66,6 +66,7 @@ The compose setup mounts this project folder into the container, so refreshed CS
 - `.env` is ignored by git, so the live key stays out of version control.
 - GitHub Actions in this repo do not use the EIA API key. If you later automate refreshes in GitHub, store the key as a GitHub Actions secret and never commit it to the repository.
 - The GitHub Pages workflow only builds the static report from files already in the repository. It does not use your EIA API key.
+- The GitHub Pages workflow refreshes Yahoo Finance market data every 6 hours and republishes the static report automatically.
 
 ## Current dashboard coverage
 
