@@ -390,7 +390,7 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Natural Gas Weekly Energy Watcher</title>
+  <title>EIA Natural Gas Weekly Analysis</title>
   <style>
     :root {{
       --bg: #f7f7f2;
@@ -506,7 +506,7 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
 </head>
 <body>
   <main class="wrap">
-    <h1>Natural Gas Weekly Energy Watcher</h1>
+    <h1>EIA Natural Gas Weekly Analysis</h1>
     <p class="lede">
       This page gives a quick, readable summary of the latest official U.S. Energy Information Administration weekly natural gas release. It highlights what changed this week, how current storage compares with history, and the cleaned tables behind the charts.
     </p>
