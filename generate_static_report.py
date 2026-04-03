@@ -7,6 +7,7 @@ import json
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from statsmodels.stats.diagnostic import acorr_ljungbox
 
 from dashboard_data import (
     DEFAULT_TICKERS,
@@ -183,6 +184,38 @@ def decomposition_chart(df: pd.DataFrame) -> str:
     )
     fig.update_xaxes(title_text="Year", row=4, col=1)
     return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def decomposition_analysis_html(df: pd.DataFrame) -> str:
+    decomp = inventory_decomposition(df)
+    resid = pd.Series(decomp.resid, index=decomp.observed.index).dropna()
+    lb = acorr_ljungbox(resid, lags=[13, 26], return_df=True)
+    acf1 = resid.autocorr(1)
+    winter_months = resid.groupby(resid.index.month).apply(lambda s: s.abs().mean())
+    winter_peak_month = int(winter_months.sort_values(ascending=False).index[0])
+    winter_peak_name = pd.Timestamp(year=2000, month=winter_peak_month, day=1).strftime("%B")
+    top_weeks = (
+        resid.groupby(resid.index.isocalendar().week.astype(int))
+        .apply(lambda s: s.abs().mean())
+        .sort_values(ascending=False)
+        .head(4)
+        .index.tolist()
+    )
+    return f"""
+    <div class="analysis-box">
+      <h3>Residual interpretation</h3>
+      <p class="small">
+        The random component does not look like pure white noise. The residual series still shows strong short-run dependence, with lag-1 autocorrelation of
+        <strong>{acf1:.2f}</strong>, and the Ljung-Box test rejects a pure-noise process at both 13 and 26 lags
+        (<strong>p-values {lb.loc[13, 'lb_pvalue']:.4f}</strong> and <strong>{lb.loc[26, 'lb_pvalue']:.4f}</strong>).
+      </p>
+      <p class="small">
+        The largest leftover disturbances cluster around winter transition weeks rather than appearing evenly spread through the year. Absolute residuals are largest in
+        <strong>{winter_peak_name}</strong>, and the most volatile weeks are
+        <strong>{", ".join(str(week) for week in top_weeks)}</strong>. That suggests the decomposition captures the broad seasonal cycle, but winter weather shocks and storage regime shifts still leave a patterned residual component.
+      </p>
+    </div>
+    """
 
 
 def normalized_prices_chart(close: pd.DataFrame) -> str:
@@ -477,6 +510,10 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
       margin-top: 14px;
       padding-top: 6px;
     }}
+    .analysis-box {{
+      margin-top: 14px;
+      padding: 2px 0 0;
+    }}
     .small {{
       font-size: 0.94rem;
     }}
@@ -535,6 +572,7 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
       <h2>Decomposition</h2>
       <p>The inventory observed series is split into longterm trend, sesonal change and random shifts.</p>
       {decomposition_chart(df)}
+      {decomposition_analysis_html(df)}
     </section>
 
     <section class="panel">
