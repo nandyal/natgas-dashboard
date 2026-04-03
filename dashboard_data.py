@@ -95,6 +95,13 @@ def inventory_decomposition(df: pd.DataFrame):
     return seasonal_decompose(series, model="additive", period=52, extrapolate_trend="freq")
 
 
+def split_residual_components(residual: pd.Series, window: int = 4) -> tuple[pd.Series, pd.Series]:
+    clean = residual.dropna().copy()
+    structured = clean.rolling(window=window, center=True, min_periods=1).mean()
+    noise = clean - structured
+    return structured, noise
+
+
 def fetch_market_prices(
     tickers: list[str] | None = None,
     start: str = "2016-01-01",

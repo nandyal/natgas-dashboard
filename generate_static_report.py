@@ -21,6 +21,7 @@ from dashboard_data import (
     monthly_returns,
     normalized_prices,
     seasonal_inventory_profile,
+    split_residual_components,
     summarize_inventory,
 )
 
@@ -147,24 +148,31 @@ def seasonality_chart(df: pd.DataFrame) -> str:
 
 def decomposition_chart(df: pd.DataFrame) -> str:
     decomp = inventory_decomposition(df)
+    structured_residual, noise_residual = split_residual_components(
+        pd.Series(decomp.resid, index=decomp.observed.index)
+    )
     clean = pd.DataFrame(
         {
             "period": decomp.observed.index,
             "observed": decomp.observed.values,
             "trend": decomp.trend.values,
             "seasonal": decomp.seasonal.values,
-            "random": decomp.resid.values,
+            "structured_residual": structured_residual.reindex(decomp.observed.index).values,
+            "noise": noise_residual.reindex(decomp.observed.index).values,
         }
     ).dropna()
 
     fig = make_subplots(
-        rows=4,
+        rows=5,
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.04,
-        subplot_titles=("Observed", "Trend", "Seasonal", "Random"),
+        subplot_titles=("Observed", "Trend", "Seasonal", "Structured Residual", "Noise"),
     )
-    for idx, column in enumerate(["observed", "trend", "seasonal", "random"], start=1):
+    for idx, column in enumerate(
+        ["observed", "trend", "seasonal", "structured_residual", "noise"],
+        start=1,
+    ):
         fig.add_trace(
             go.Scatter(
                 x=clean["period"],
@@ -179,10 +187,10 @@ def decomposition_chart(df: pd.DataFrame) -> str:
     fig.update_layout(
         title="Decomposition of natural gas inventory",
         template="plotly_white",
-        height=720,
+        height=880,
         margin=dict(l=20, r=20, t=70, b=20),
     )
-    fig.update_xaxes(title_text="Year", row=4, col=1)
+    fig.update_xaxes(title_text="Year", row=5, col=1)
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
@@ -205,14 +213,15 @@ def decomposition_analysis_html(df: pd.DataFrame) -> str:
     <div class="analysis-box">
       <h3>Residual interpretation</h3>
       <p class="small">
-        The random component does not look like pure white noise. The residual series still shows strong short-run dependence, with lag-1 autocorrelation of
+        The residual component does not look like pure white noise. The residual series still shows strong short-run dependence, with lag-1 autocorrelation of
         <strong>{acf1:.2f}</strong>, and the Ljung-Box test rejects a pure-noise process at both 13 and 26 lags
         (<strong>p-values {lb.loc[13, 'lb_pvalue']:.4f}</strong> and <strong>{lb.loc[26, 'lb_pvalue']:.4f}</strong>).
       </p>
       <p class="small">
         The largest leftover disturbances cluster around winter transition weeks rather than appearing evenly spread through the year. Absolute residuals are largest in
         <strong>{winter_peak_name}</strong>, and the most volatile weeks are
-        <strong>{", ".join(str(week) for week in top_weeks)}</strong>. That suggests the decomposition captures the broad seasonal cycle, but winter weather shocks and storage regime shifts still leave a patterned residual component.
+        <strong>{", ".join(str(week) for week in top_weeks)}</strong>. In the figure, this leftover component is split heuristically into a smoother
+        <strong>Structured Residual</strong> line, meant to capture winter weather shocks and storage-regime shifts, and a faster-moving <strong>Noise</strong> line for the remaining short-run variation.
       </p>
     </div>
     """

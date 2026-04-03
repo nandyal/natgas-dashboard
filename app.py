@@ -22,6 +22,7 @@ from dashboard_data import (
     monthly_returns,
     normalized_prices,
     seasonal_inventory_profile,
+    split_residual_components,
     summarize_inventory,
 )
 
@@ -158,24 +159,31 @@ with left:
     st.plotly_chart(recent_chart, width="stretch")
 
 with right:
+    structured_residual, noise_residual = split_residual_components(
+        pd.Series(decomposition.resid, index=decomposition.observed.index)
+    )
     decomp_df = pd.DataFrame(
         {
             "period": decomposition.observed.index,
             "observed": decomposition.observed.values,
             "trend": decomposition.trend.values,
             "seasonal": decomposition.seasonal.values,
-            "residual": decomposition.resid.values,
+            "structured_residual": structured_residual.reindex(decomposition.observed.index).values,
+            "noise": noise_residual.reindex(decomposition.observed.index).values,
         }
     )
     decomp_clean = decomp_df.dropna().copy()
     decomp_chart = make_subplots(
-        rows=4,
+        rows=5,
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.03,
-        subplot_titles=("Observed", "Trend", "Seasonal", "Random"),
+        subplot_titles=("Observed", "Trend", "Seasonal", "Structured Residual", "Noise"),
     )
-    for idx, column in enumerate(["observed", "trend", "seasonal", "residual"], start=1):
+    for idx, column in enumerate(
+        ["observed", "trend", "seasonal", "structured_residual", "noise"],
+        start=1,
+    ):
         decomp_chart.add_trace(
             go.Scatter(
                 x=decomp_clean["period"],
@@ -191,10 +199,11 @@ with right:
     decomp_chart.update_yaxes(title_text="BCF", row=2, col=1)
     decomp_chart.update_yaxes(title_text="BCF", row=3, col=1)
     decomp_chart.update_yaxes(title_text="BCF", row=4, col=1)
-    decomp_chart.update_xaxes(title_text="Year", row=4, col=1)
+    decomp_chart.update_yaxes(title_text="BCF", row=5, col=1)
+    decomp_chart.update_xaxes(title_text="Year", row=5, col=1)
     decomp_chart.update_layout(
         title="Decomposition of Natural Gas Inventory",
-        height=560,
+        height=700,
         margin=dict(l=20, r=20, t=70, b=20),
     )
     st.plotly_chart(decomp_chart, width="stretch")
