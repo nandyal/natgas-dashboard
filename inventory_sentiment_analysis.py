@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,18 @@ from dashboard_data import load_inventory_data
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_CSV = BASE_DIR / "inventory_sentiment_events.csv"
 OUTPUT_JSON = BASE_DIR / "inventory_sentiment_events.json"
+
+
+def load_local_env() -> None:
+    env_path = BASE_DIR / ".env"
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
 
 
 def build_event_text(row: pd.Series) -> str:
@@ -41,11 +54,13 @@ def get_vader() -> Any:
 def get_finbert() -> Any:
     from transformers import pipeline
 
+    token = os.environ.get("FINBERT_API_KEY") or os.environ.get("HF_TOKEN")
     return pipeline(
         "text-classification",
         model="ProsusAI/finbert",
         tokenizer="ProsusAI/finbert",
         truncation=True,
+        token=token,
     )
 
 
@@ -54,6 +69,7 @@ def classify_inventory_sentiment(change: float) -> str:
 
 
 def main() -> int:
+    load_local_env()
     df = load_inventory_data(BASE_DIR).copy()
     df["weekly_change_bcf"] = df["value_bcf"].diff()
     df["year_ago_bcf"] = df["value_bcf"].shift(52)

@@ -49,6 +49,14 @@ This creates precomputed FinBERT and VADER sentiment files for unusual inventory
 - `inventory_sentiment_events.csv`
 - `inventory_sentiment_events.json`
 
+If you have a private Hugging Face or FinBERT access token, store it only in your local `.env` file as:
+
+```env
+FINBERT_API_KEY=your_rotated_finbert_api_key
+```
+
+The sentiment script reads `FINBERT_API_KEY` locally and does not require that key to be committed or pushed to GitHub.
+
 ## Docker
 
 Build and run the dashboard:
