@@ -82,7 +82,7 @@ with tabs[3]:
         finbert_numeric = sentiment["finbert_label"].map({"negative": -1, "neutral": 0, "positive": 1}).fillna(0)
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=sentiment["period"], y=sentiment["monthly_return_pct"], mode="markers", name="Monthly return (%)", text=sentiment["ticker"]))
-        fig.add_trace(go.Scatter(x=sentiment["period"], y=sentiment["forward_21d_return_pct"], mode="markers", name="Forward 1M return (%)", text=sentiment["ticker"]))
+        fig.add_trace(go.Scatter(x=sentiment["period"], y=sentiment["forward_1m_return_pct"], mode="markers", name="Next complete month return (%)", text=sentiment["ticker"]))
         fig.add_trace(go.Scatter(x=sentiment["period"], y=sentiment["vader_compound"], mode="lines+markers", name="VADER"))
         fig.add_trace(go.Scatter(x=sentiment["period"], y=finbert_numeric, mode="lines+markers", name="FinBERT"))
         fig.update_layout(height=520, margin=dict(l=20, r=20, t=20, b=20))
@@ -90,7 +90,7 @@ with tabs[3]:
 
         latest = sentiment.sort_values(["ticker", "period"], ascending=[True, False]).groupby("ticker").head(1)
         st.dataframe(
-            latest[["ticker", "period", "monthly_return_pct", "finbert_label", "finbert_score", "vader_compound", "forward_21d_return_pct"]],
+            latest[["ticker", "period", "monthly_return_pct", "finbert_label", "finbert_score", "vader_compound", "forward_1m_return_pct"]],
             width="stretch",
         )
 

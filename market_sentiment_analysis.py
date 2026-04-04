@@ -62,11 +62,21 @@ def monthly_event_text(ticker: str, period: pd.Timestamp, monthly_ret: float, tr
     )
 
 
+def latest_complete_month_end(index: pd.DatetimeIndex) -> pd.Timestamp:
+    max_date = pd.Timestamp(index.max())
+    current_month_end = max_date.to_period("M").to_timestamp("M")
+    if max_date.normalize() < current_month_end.normalize():
+        return (max_date.to_period("M") - 1).to_timestamp("M")
+    return current_month_end
+
+
 def build_market_sentiment_events() -> pd.DataFrame:
     close = fetch_market_prices(TICKERS, start="2019-01-01")
     monthly = monthly_returns(close)
     daily = close.pct_change().dropna(how="all")
-    forward_21d = close.pct_change(periods=21).shift(-21) * 100
+    complete_through = latest_complete_month_end(close.index)
+    monthly = monthly[monthly.index <= complete_through]
+    next_month_return = monthly.shift(-1)
 
     records: list[dict] = []
     for ticker in close.columns:
@@ -81,7 +91,7 @@ def build_market_sentiment_events() -> pd.DataFrame:
                     "period": period,
                     "monthly_return_pct": monthly_ret * 100,
                     "trailing_vol_pct": float(trailing_vol.asof(period) * 100) if pd.notna(trailing_vol.asof(period)) else None,
-                    "forward_21d_return_pct": float(forward_21d[ticker].asof(period)) if pd.notna(forward_21d[ticker].asof(period)) else None,
+                    "forward_1m_return_pct": float(next_month_return[ticker].get(period) * 100) if pd.notna(next_month_return[ticker].get(period)) else None,
                     "event_text": monthly_event_text(
                         ticker=ticker,
                         period=period,

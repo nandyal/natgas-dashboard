@@ -131,7 +131,7 @@ def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
     finbert_numeric = df["finbert_label"].map({"negative": -1, "neutral": 0, "positive": 1}).fillna(0)
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(x=df["period"], y=df["monthly_return_pct"], mode="markers", marker=dict(size=8), name="Monthly return (%)", text=df["ticker"]), secondary_y=False)
-    fig.add_trace(go.Scatter(x=df["period"], y=df["forward_21d_return_pct"], mode="markers", marker=dict(size=8, color="#1d4ed8"), name="Forward 1M return (%)", text=df["ticker"]), secondary_y=False)
+    fig.add_trace(go.Scatter(x=df["period"], y=df["forward_1m_return_pct"], mode="markers", marker=dict(size=8, color="#1d4ed8"), name="Next complete month return (%)", text=df["ticker"]), secondary_y=False)
     fig.add_trace(go.Scatter(x=df["period"], y=df["vader_compound"], mode="lines+markers", line=dict(color="#0f766e", width=2), name="VADER"), secondary_y=True)
     fig.add_trace(go.Scatter(x=df["period"], y=finbert_numeric, mode="lines+markers", line=dict(color="#7c3aed", width=2, dash="dot"), name="FinBERT"), secondary_y=True)
     fig.update_layout(title="Sentiment and one-month price reaction", template="plotly_white", height=500, margin=dict(l=20, r=20, t=60, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
@@ -143,14 +143,14 @@ def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
 def sentiment_table_html(sentiment_df: pd.DataFrame) -> str:
     latest = sentiment_df.sort_values(["ticker", "period"], ascending=[True, False]).groupby("ticker").head(1)
     rows = "".join(
-        f"<tr><td>{row.ticker}</td><td>{row.period.strftime('%Y-%m-%d')}</td><td>{row.monthly_return_pct:+.1f}%</td><td>{row.finbert_label}<br>({row.finbert_score:.2f})</td><td>{row.vader_compound:.2f}</td><td>{row.forward_21d_return_pct:+.1f}%</td></tr>"
+        f"<tr><td>{row.ticker}</td><td>{row.period.strftime('%Y-%m-%d')}</td><td>{row.monthly_return_pct:+.1f}%</td><td>{row.finbert_label}<br>({row.finbert_score:.2f})</td><td>{row.vader_compound:.2f}</td><td>{row.forward_1m_return_pct:+.1f}%</td></tr>"
         for row in latest.itertuples()
     )
     return f"""
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Ticker</th><th>Latest sentiment month</th><th>Monthly return</th><th>FinBERT</th><th>VADER</th><th>Forward 1M price change</th></tr>
+          <tr><th>Ticker</th><th>Latest sentiment month</th><th>Monthly return</th><th>FinBERT</th><th>VADER</th><th>Next complete month price change</th></tr>
         </thead>
         <tbody>{rows}</tbody>
       </table>
@@ -169,8 +169,8 @@ def sentiment_section_html(sentiment_df: pd.DataFrame) -> str:
     return f"""
     <section class="panel">
       <h2>Stock, ETF, and futures sentiment</h2>
-      <p>This section applies FinBERT and VADER to monthly price-event summaries for each tracked stock, ETF, and natural gas futures series. The chart and table also show the one-month price change after the sentiment observation.</p>
-      <p class="small">These NLP labels describe the tone of price-event summaries, so they should be read alongside the realized forward price change rather than as standalone trading signals.</p>
+      <p>This section applies FinBERT and VADER to monthly price-event summaries for each tracked stock, ETF, and natural gas futures series. The chart and table also show the next complete calendar-month price change after the sentiment observation.</p>
+      <p class="small">These NLP labels describe the tone of price-event summaries, so they should be read alongside the realized next-month price change rather than as standalone trading signals.</p>
       {sentiment_chart(sentiment_df)}
       {sentiment_table_html(sentiment_df)}
     </section>
