@@ -84,8 +84,8 @@ def correlation_chart(close: pd.DataFrame) -> str:
 def portfolio_chart(close: pd.DataFrame) -> str:
     portfolio = build_optimized_portfolio(close, PORTFOLIO_TICKERS)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=portfolio.index.index, y=portfolio.index.values, mode="lines", line=dict(width=3, color="#0f766e"), name="Kelly portfolio"))
-    fig.update_layout(title="Kelly portfolio performance", template="plotly_white", height=440, margin=dict(l=20, r=20, t=60, b=20), yaxis_title="Indexed to 100")
+    fig.add_trace(go.Scatter(x=portfolio.index.index, y=portfolio.index.values, mode="lines", line=dict(width=3, color="#0f766e"), name="Long-short Kelly portfolio"))
+    fig.update_layout(title="Long-short Kelly portfolio performance", template="plotly_white", height=440, margin=dict(l=20, r=20, t=60, b=20), yaxis_title="Indexed to 100")
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
@@ -99,7 +99,7 @@ def portfolio_summary_html(close: pd.DataFrame) -> str:
     return f"""
     <div class="panel">
       <h2>Optimized allocation</h2>
-      <p>The portfolio uses a bounded long-only Kelly Criterion allocation across selected stocks and ETFs, re-estimated from trailing daily returns and rebalanced every 2 years.</p>
+      <p>The portfolio uses a bounded long-short Kelly Criterion allocation across selected stocks and ETFs, re-estimated from trailing daily returns and rebalanced annually. Short positions are exited for the rest of the calendar month once their loss exceeds 10%.</p>
       <div class="table-wrap" style="margin-top:14px;">
         <table>
           <thead><tr>{history_header}</tr></thead>

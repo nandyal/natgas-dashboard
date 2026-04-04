@@ -146,15 +146,25 @@ def correlation_matrix(close: pd.DataFrame) -> pd.DataFrame:
 
 def _optimize_portfolio_weights(
     returns: pd.DataFrame,
-    max_weight: float = 0.45,
+    max_long_weight: float = 0.55,
+    max_short_weight: float = 0.25,
 ) -> pd.Series:
     available = list(returns.columns)
     if len(returns) < 20:
         return pd.Series(1 / len(available), index=available)
 
     n_assets = len(available)
-    start = [1 / n_assets] * n_assets
-    bounds = [(0.0, min(max_weight, 1.0))] * n_assets
+    signal = returns.mean()
+    start = signal - signal.mean()
+    if np.allclose(start.abs().sum(), 0.0):
+        start = pd.Series(1 / n_assets, index=available)
+    else:
+        start = start / start.abs().sum()
+        start = start.clip(lower=-max_short_weight, upper=max_long_weight)
+        start = start - (start.sum() - 1.0) / n_assets
+        start = start.clip(lower=-max_short_weight, upper=max_long_weight)
+    start = start.to_numpy(dtype=float)
+    bounds = [(-min(max_short_weight, 1.0), min(max_long_weight, 1.0))] * n_assets
     constraints = [{"type": "eq", "fun": lambda w: sum(w) - 1}]
 
     def negative_kelly_growth(weights: list[float]) -> float:
@@ -177,12 +187,41 @@ def _optimize_portfolio_weights(
     return pd.Series(start, index=available)
 
 
+def _apply_short_stop_loss(
+    period_returns: pd.DataFrame,
+    weights: pd.Series,
+    monthly_short_stop: float = 0.10,
+) -> pd.Series:
+    simulated_returns: list[float] = []
+    simulated_index: list[pd.Timestamp] = []
+
+    for _, month_slice in period_returns.groupby(period_returns.index.to_period("M")):
+        active_weights = weights.copy()
+        short_exited = pd.Series(False, index=weights.index)
+        month_cumulative = pd.Series(1.0, index=weights.index)
+
+        for date, row in month_slice.iterrows():
+            portfolio_return = float(row.fillna(0.0).mul(active_weights, fill_value=0.0).sum())
+            simulated_returns.append(portfolio_return)
+            simulated_index.append(date)
+
+            month_cumulative = month_cumulative.mul(1.0 + row.fillna(0.0), fill_value=1.0)
+            short_breach = (weights < 0) & (~short_exited) & ((month_cumulative - 1.0) >= monthly_short_stop)
+            if short_breach.any():
+                active_weights.loc[short_breach] = 0.0
+                short_exited.loc[short_breach] = True
+
+    return pd.Series(simulated_returns, index=pd.DatetimeIndex(simulated_index)).sort_index()
+
+
 def build_optimized_portfolio(
     close: pd.DataFrame,
     tickers: list[str] | None = None,
     risk_free_rate: float = 0.02,
-    max_weight: float = 0.45,
-    rebalance_years: int = 2,
+    max_long_weight: float = 0.55,
+    max_short_weight: float = 0.25,
+    rebalance_years: int = 1,
+    monthly_short_stop: float = 0.10,
 ) -> PortfolioSummary:
     tickers = tickers or PORTFOLIO_TICKERS
     available = [ticker for ticker in tickers if ticker in close.columns]
@@ -213,7 +252,8 @@ def build_optimized_portfolio(
             lookback = returns.loc[:rebalance_date]
         weights = _optimize_portfolio_weights(
             lookback,
-            max_weight=max_weight,
+            max_long_weight=max_long_weight,
+            max_short_weight=max_short_weight,
         )
         latest_weights = weights
         rebalance_history.append(weights.rename(rebalance_date))
@@ -225,7 +265,13 @@ def build_optimized_portfolio(
             mask = returns.index >= rebalance_date
         period_slice = returns.loc[mask]
         if not period_slice.empty:
-            period_returns.append(period_slice.mul(weights, axis=1).sum(axis=1))
+            period_returns.append(
+                _apply_short_stop_loss(
+                    period_slice,
+                    weights,
+                    monthly_short_stop=monthly_short_stop,
+                )
+            )
 
     portfolio_returns = pd.concat(period_returns).sort_index()
     cumulative = (1 + portfolio_returns).cumprod() * 100
