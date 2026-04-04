@@ -123,7 +123,7 @@ def monthly_tables_html(close: pd.DataFrame) -> str:
             </div>
             """
         )
-    return '<div class="mini-grid">' + "".join(blocks) + "</div>"
+    return '<div class="stack-grid">' + "".join(blocks) + "</div>"
 
 
 def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
@@ -196,6 +196,7 @@ def page_html(close: pd.DataFrame, sentiment_df: pd.DataFrame) -> str:
     .nav a.active {{ color:#15231f; }}
     .two-up {{ display:grid; gap:18px; grid-template-columns:1fr; }}
     .mini-grid {{ display:grid; gap:16px; grid-template-columns:1fr; }}
+    .stack-grid {{ display:grid; gap:16px; grid-template-columns:1fr; }}
     .mini-table h3 {{ margin:0 0 10px; font-size:1rem; }}
     .table-wrap {{ overflow-x:auto; }}
     h1,h2,h3 {{ margin:0 0 12px; }}
