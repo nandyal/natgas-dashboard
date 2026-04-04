@@ -136,13 +136,31 @@ def monthly_tables_html(close: pd.DataFrame) -> str:
 def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
     df = sentiment_df.copy()
     finbert_numeric = df["finbert_label"].map({"negative": -1, "neutral": 0, "positive": 1}).fillna(0)
+    max_abs_change = float(
+        pd.concat(
+            [
+                df["monthly_return_pct"].abs(),
+                df["forward_1m_return_pct"].abs(),
+            ]
+        ).max()
+    )
+    price_axis_limit = max(100.0, round(max_abs_change + 5, 0))
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Scatter(x=df["period"], y=df["monthly_return_pct"], mode="markers", marker=dict(size=8), name="Monthly return (%)", text=df["ticker"]), secondary_y=False)
+    fig.add_trace(
+        go.Scatter(
+            x=df["period"],
+            y=df["monthly_return_pct"],
+            mode="markers",
+            marker=dict(size=8, color="#111111"),
+            name="1 month return (%)",
+            text=df["ticker"],
+        ),
+        secondary_y=False,
+    )
     fig.add_trace(go.Scatter(x=df["period"], y=df["forward_1m_return_pct"], mode="markers", marker=dict(size=8, color="#1d4ed8"), name="Next complete month return (%)", text=df["ticker"]), secondary_y=False)
-    fig.add_trace(go.Scatter(x=df["period"], y=df["vader_compound"], mode="lines+markers", line=dict(color="#0f766e", width=2), name="VADER"), secondary_y=True)
     fig.add_trace(go.Scatter(x=df["period"], y=finbert_numeric, mode="lines+markers", line=dict(color="#7c3aed", width=2, dash="dot"), name="FinBERT"), secondary_y=True)
     fig.update_layout(title="Sentiment and one-month price reaction", template="plotly_white", height=500, margin=dict(l=20, r=20, t=60, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
-    fig.update_yaxes(title_text="Price change (%)", secondary_y=False)
+    fig.update_yaxes(title_text="Price change (%)", secondary_y=False, range=[-price_axis_limit, price_axis_limit])
     fig.update_yaxes(title_text="Sentiment score", secondary_y=True, range=[-1.1, 1.1])
     return fig.to_html(full_html=False, include_plotlyjs=False)
 

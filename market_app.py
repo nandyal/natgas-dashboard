@@ -89,12 +89,42 @@ with tabs[3]:
     else:
         sentiment = sentiment.sort_values("period")
         finbert_numeric = sentiment["finbert_label"].map({"negative": -1, "neutral": 0, "positive": 1}).fillna(0)
+        max_abs_change = float(
+            pd.concat(
+                [
+                    sentiment["monthly_return_pct"].abs(),
+                    sentiment["forward_1m_return_pct"].abs(),
+                ]
+            ).max()
+        )
+        price_axis_limit = max(100.0, round(max_abs_change + 5, 0))
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=sentiment["period"], y=sentiment["monthly_return_pct"], mode="markers", name="Monthly return (%)", text=sentiment["ticker"]))
-        fig.add_trace(go.Scatter(x=sentiment["period"], y=sentiment["forward_1m_return_pct"], mode="markers", name="Next complete month return (%)", text=sentiment["ticker"]))
-        fig.add_trace(go.Scatter(x=sentiment["period"], y=sentiment["vader_compound"], mode="lines+markers", name="VADER"))
+        fig.add_trace(
+            go.Scatter(
+                x=sentiment["period"],
+                y=sentiment["monthly_return_pct"],
+                mode="markers",
+                name="1 month return (%)",
+                text=sentiment["ticker"],
+                marker=dict(color="#111111", size=8),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=sentiment["period"],
+                y=sentiment["forward_1m_return_pct"],
+                mode="markers",
+                name="Next complete month return (%)",
+                text=sentiment["ticker"],
+                marker=dict(color="#1d4ed8", size=8),
+            )
+        )
         fig.add_trace(go.Scatter(x=sentiment["period"], y=finbert_numeric, mode="lines+markers", name="FinBERT"))
-        fig.update_layout(height=520, margin=dict(l=20, r=20, t=20, b=20))
+        fig.update_layout(
+            height=520,
+            margin=dict(l=20, r=20, t=20, b=20),
+            yaxis=dict(range=[-price_axis_limit, price_axis_limit], title="Price change (%)"),
+        )
         st.plotly_chart(fig, width="stretch")
 
         if not recent_sentiment.empty:
