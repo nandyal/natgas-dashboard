@@ -145,7 +145,8 @@ def build_recent_market_sentiment(close: pd.DataFrame) -> pd.DataFrame:
         records.append(
             {
                 "ticker": ticker,
-                "as_of_date": latest_date,
+                "as_of_date": one_month_anchor.normalize(),
+                "analysis_end_date": latest_date.normalize(),
                 "one_week_return_pct": one_week_return * 100,
                 "one_month_return_pct": one_month_return * 100,
                 "trailing_vol_pct": trailing_vol * 100,

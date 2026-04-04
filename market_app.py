@@ -43,7 +43,7 @@ def get_market_sentiment() -> pd.DataFrame:
 def get_recent_market_sentiment() -> pd.DataFrame:
     if not MARKET_SENTIMENT_RECENT_CSV.exists():
         return pd.DataFrame()
-    return pd.read_csv(MARKET_SENTIMENT_RECENT_CSV, parse_dates=["as_of_date"])
+    return pd.read_csv(MARKET_SENTIMENT_RECENT_CSV, parse_dates=["as_of_date", "analysis_end_date"])
 
 
 st.title("Natural Gas Market Dashboard")
@@ -77,8 +77,11 @@ with tabs[2]:
     fig.update_layout(title="Optimized portfolio performance", height=460, margin=dict(l=20, r=20, t=50, b=20), yaxis_title="Indexed to 100")
     st.plotly_chart(fig, width="stretch")
     st.dataframe(portfolio.weights.rename("weight").mul(100).round(1).to_frame(), width="stretch")
+    rebalance_table = portfolio.rebalance_weights.mul(100).round(1).copy()
+    rebalance_table.index = rebalance_table.index.strftime("%Y-%m-%d")
+    st.dataframe(rebalance_table, width="stretch")
     st.caption(
-        f"Annualized return {portfolio.annual_return * 100:.1f}%, "
+        f"Portfolio is rebalanced every 2 years. Annualized return {portfolio.annual_return * 100:.1f}%, "
         f"annualized volatility {portfolio.annual_volatility * 100:.1f}%, "
         f"Sharpe ratio {portfolio.sharpe_ratio:.2f}."
     )
@@ -89,22 +92,13 @@ with tabs[3]:
     else:
         sentiment = sentiment.sort_values("period")
         finbert_numeric = sentiment["finbert_label"].map({"negative": -1, "neutral": 0, "positive": 1}).fillna(0)
-        max_abs_change = float(
-            pd.concat(
-                [
-                    sentiment["monthly_return_pct"].abs(),
-                    sentiment["forward_1m_return_pct"].abs(),
-                ]
-            ).max()
-        )
-        price_axis_limit = max(100.0, round(max_abs_change + 5, 0))
         fig = go.Figure()
         fig.add_trace(
             go.Scatter(
                 x=sentiment["period"],
-                y=sentiment["monthly_return_pct"],
+                y=sentiment["monthly_return_pct"] / 4.0,
                 mode="markers",
-                name="1 month return (%)",
+                name="1 week return (%)",
                 text=sentiment["ticker"],
                 marker=dict(color="#111111", size=8),
             )
@@ -123,13 +117,18 @@ with tabs[3]:
         fig.update_layout(
             height=520,
             margin=dict(l=20, r=20, t=20, b=20),
-            yaxis=dict(range=[-price_axis_limit, price_axis_limit], title="Price change (%)"),
+            yaxis=dict(range=[-100, 100], title="Price change (%)"),
         )
         st.plotly_chart(fig, width="stretch")
 
         if not recent_sentiment.empty:
             st.dataframe(
-                recent_sentiment[["ticker", "as_of_date", "one_week_return_pct", "finbert_label", "finbert_score", "vader_compound", "one_month_return_pct"]],
+                recent_sentiment[["ticker", "as_of_date", "analysis_end_date", "one_week_return_pct", "finbert_label", "finbert_score", "vader_compound", "one_month_return_pct"]].rename(
+                    columns={
+                        "as_of_date": "sentiment_anchor_date",
+                        "analysis_end_date": "window_end_date",
+                    }
+                ),
                 width="stretch",
             )
 

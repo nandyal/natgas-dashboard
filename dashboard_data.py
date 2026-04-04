@@ -26,6 +26,7 @@ class InventorySummary:
 @dataclass(frozen=True)
 class PortfolioSummary:
     weights: pd.Series
+    rebalance_weights: pd.DataFrame
     returns: pd.Series
     index: pd.Series
     annual_return: float
@@ -141,19 +142,14 @@ def correlation_matrix(close: pd.DataFrame) -> pd.DataFrame:
     return daily_returns(close).corr()
 
 
-def build_optimized_portfolio(
-    close: pd.DataFrame,
-    tickers: list[str] | None = None,
+def _optimize_portfolio_weights(
+    returns: pd.DataFrame,
     risk_free_rate: float = 0.02,
     max_weight: float = 0.45,
-) -> PortfolioSummary:
-    tickers = tickers or PORTFOLIO_TICKERS
-    available = [ticker for ticker in tickers if ticker in close.columns]
-    if not available:
-        raise ValueError("None of the requested portfolio tickers are available.")
-
-    portfolio_close = close[available].dropna().copy()
-    returns = portfolio_close.pct_change().dropna()
+) -> pd.Series:
+    available = list(returns.columns)
+    if len(returns) < 20:
+        return pd.Series(1 / len(available), index=available)
     annualized_returns = returns.mean() * 252
     annualized_cov = returns.cov() * 252
 
@@ -179,17 +175,70 @@ def build_optimized_portfolio(
     )
 
     if result.success:
-        weights = pd.Series(result.x, index=available)
-    else:
-        weights = pd.Series(start, index=available)
+        return pd.Series(result.x, index=available)
+    return pd.Series(start, index=available)
 
-    portfolio_returns = returns.mul(weights, axis=1).sum(axis=1)
+
+def build_optimized_portfolio(
+    close: pd.DataFrame,
+    tickers: list[str] | None = None,
+    risk_free_rate: float = 0.02,
+    max_weight: float = 0.45,
+    rebalance_years: int = 2,
+) -> PortfolioSummary:
+    tickers = tickers or PORTFOLIO_TICKERS
+    available = [ticker for ticker in tickers if ticker in close.columns]
+    if not available:
+        raise ValueError("None of the requested portfolio tickers are available.")
+
+    portfolio_close = close[available].dropna().copy()
+    returns = portfolio_close.pct_change().dropna()
+    if returns.empty:
+        raise ValueError("Not enough price history to build portfolio returns.")
+
+    rebalance_months = rebalance_years * 12
+    rebalance_dates = [returns.index[0]]
+    candidate_dates = returns.resample(f"{rebalance_months}ME").last().index
+    for date in candidate_dates:
+        actual_date = returns.index[returns.index >= date]
+        if len(actual_date) > 0 and actual_date[0] not in rebalance_dates:
+            rebalance_dates.append(actual_date[0])
+    rebalance_dates = sorted(set(rebalance_dates))
+
+    rebalance_history: list[pd.Series] = []
+    period_returns: list[pd.Series] = []
+    latest_weights = pd.Series(dtype=float)
+
+    for idx, rebalance_date in enumerate(rebalance_dates):
+        lookback = returns.loc[:rebalance_date].tail(252 * rebalance_years)
+        if len(lookback) < 126:
+            lookback = returns.loc[:rebalance_date]
+        weights = _optimize_portfolio_weights(
+            lookback,
+            risk_free_rate=risk_free_rate,
+            max_weight=max_weight,
+        )
+        latest_weights = weights
+        rebalance_history.append(weights.rename(rebalance_date))
+
+        if idx + 1 < len(rebalance_dates):
+            next_date = rebalance_dates[idx + 1]
+            mask = (returns.index >= rebalance_date) & (returns.index < next_date)
+        else:
+            mask = returns.index >= rebalance_date
+        period_slice = returns.loc[mask]
+        if not period_slice.empty:
+            period_returns.append(period_slice.mul(weights, axis=1).sum(axis=1))
+
+    portfolio_returns = pd.concat(period_returns).sort_index()
     cumulative = (1 + portfolio_returns).cumprod() * 100
     annual_return = float(portfolio_returns.mean() * 252)
     annual_volatility = float(portfolio_returns.std() * (252 ** 0.5))
     sharpe_ratio = 0.0 if annual_volatility == 0 else float((annual_return - risk_free_rate) / annual_volatility)
+    rebalance_weights = pd.DataFrame(rebalance_history).fillna(0.0)
     return PortfolioSummary(
-        weights=weights.sort_values(ascending=False),
+        weights=latest_weights.sort_values(ascending=False),
+        rebalance_weights=rebalance_weights,
         returns=portfolio_returns,
         index=cumulative,
         annual_return=annual_return,

@@ -35,7 +35,7 @@ def load_market_sentiment() -> pd.DataFrame:
 def load_recent_market_sentiment() -> pd.DataFrame:
     if not RECENT_SENTIMENT_CSV.exists():
         return pd.DataFrame()
-    return pd.read_csv(RECENT_SENTIMENT_CSV, parse_dates=["as_of_date"])
+    return pd.read_csv(RECENT_SENTIMENT_CSV, parse_dates=["as_of_date", "analysis_end_date"])
 
 
 def nav_html() -> str:
@@ -91,15 +91,21 @@ def portfolio_chart(close: pd.DataFrame) -> str:
 
 def portfolio_summary_html(close: pd.DataFrame) -> str:
     portfolio = build_optimized_portfolio(close, PORTFOLIO_TICKERS)
-    rows = "".join(f"<tr><td>{ticker}</td><td>{weight * 100:.1f}%</td></tr>" for ticker, weight in portfolio.weights.items())
+    history_header = "".join(f"<th>{col}</th>" for col in ["Rebalance date", *portfolio.rebalance_weights.columns.tolist()])
+    history_rows = ""
+    for date, row in portfolio.rebalance_weights.iterrows():
+        cells = "".join(f"<td>{value * 100:.1f}%</td>" for value in row.tolist())
+        history_rows += f"<tr><td>{pd.Timestamp(date).strftime('%Y-%m-%d')}</td>{cells}</tr>"
     return f"""
     <div class="panel">
       <h2>Optimized allocation</h2>
-      <p>The portfolio is optimized on a long-only basis for risk-adjusted return using historical daily returns across selected stocks and ETFs.</p>
-      <table>
-        <thead><tr><th>Asset</th><th>Weight</th></tr></thead>
-        <tbody>{rows}</tbody>
-      </table>
+      <p>The portfolio is optimized on a long-only basis for risk-adjusted return using historical daily returns across selected stocks and ETFs, with a rebalance every 2 years.</p>
+      <div class="table-wrap" style="margin-top:14px;">
+        <table>
+          <thead><tr>{history_header}</tr></thead>
+          <tbody>{history_rows}</tbody>
+        </table>
+      </div>
       <p class="small"><strong>Annualized return:</strong> {portfolio.annual_return * 100:.1f}%<br>
       <strong>Annualized volatility:</strong> {portfolio.annual_volatility * 100:.1f}%<br>
       <strong>Sharpe ratio:</strong> {portfolio.sharpe_ratio:.2f}</p>
@@ -136,23 +142,14 @@ def monthly_tables_html(close: pd.DataFrame) -> str:
 def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
     df = sentiment_df.copy()
     finbert_numeric = df["finbert_label"].map({"negative": -1, "neutral": 0, "positive": 1}).fillna(0)
-    max_abs_change = float(
-        pd.concat(
-            [
-                df["monthly_return_pct"].abs(),
-                df["forward_1m_return_pct"].abs(),
-            ]
-        ).max()
-    )
-    price_axis_limit = max(100.0, round(max_abs_change + 5, 0))
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
         go.Scatter(
             x=df["period"],
-            y=df["monthly_return_pct"],
+            y=df["monthly_return_pct"] / 4.0,
             mode="markers",
             marker=dict(size=8, color="#111111"),
-            name="1 month return (%)",
+            name="1 week return (%)",
             text=df["ticker"],
         ),
         secondary_y=False,
@@ -160,7 +157,7 @@ def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
     fig.add_trace(go.Scatter(x=df["period"], y=df["forward_1m_return_pct"], mode="markers", marker=dict(size=8, color="#1d4ed8"), name="Next complete month return (%)", text=df["ticker"]), secondary_y=False)
     fig.add_trace(go.Scatter(x=df["period"], y=finbert_numeric, mode="lines+markers", line=dict(color="#7c3aed", width=2, dash="dot"), name="FinBERT"), secondary_y=True)
     fig.update_layout(title="Sentiment and one-month price reaction", template="plotly_white", height=500, margin=dict(l=20, r=20, t=60, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
-    fig.update_yaxes(title_text="Price change (%)", secondary_y=False, range=[-price_axis_limit, price_axis_limit])
+    fig.update_yaxes(title_text="Price change (%)", secondary_y=False, range=[-100, 100])
     fig.update_yaxes(title_text="Sentiment score", secondary_y=True, range=[-1.1, 1.1])
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
@@ -168,14 +165,14 @@ def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
 def sentiment_table_html(recent_sentiment_df: pd.DataFrame) -> str:
     latest = recent_sentiment_df.sort_values("ticker").copy()
     rows = "".join(
-        f"<tr><td>{row.ticker}</td><td>{row.as_of_date.strftime('%Y-%m-%d')}</td><td>{row.one_week_return_pct:+.1f}%</td><td>{row.finbert_label}<br>({row.finbert_score:.2f})</td><td>{row.vader_compound:.2f}</td><td>{row.one_month_return_pct:+.1f}%</td></tr>"
+        f"<tr><td>{row.ticker}</td><td>{row.as_of_date.strftime('%Y-%m-%d')}</td><td>{row.analysis_end_date.strftime('%Y-%m-%d')}</td><td>{row.one_week_return_pct:+.1f}%</td><td>{row.finbert_label}<br>({row.finbert_score:.2f})</td><td>{row.vader_compound:.2f}</td><td>{row.one_month_return_pct:+.1f}%</td></tr>"
         for row in latest.itertuples()
     )
     return f"""
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Ticker</th><th>As of date</th><th>1 week return</th><th>FinBERT</th><th>VADER</th><th>1 month return</th></tr>
+          <tr><th>Ticker</th><th>Sentiment anchor date</th><th>Window end date</th><th>1 week return</th><th>FinBERT</th><th>VADER</th><th>1 month return</th></tr>
         </thead>
         <tbody>{rows}</tbody>
       </table>

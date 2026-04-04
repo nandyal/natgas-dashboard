@@ -1,7 +1,8 @@
 [
   {
     "ticker":"AR",
-    "as_of_date":"2026-04-02T00:00:00.000",
+    "as_of_date":"2026-03-03T00:00:00.000",
+    "analysis_end_date":"2026-04-02T00:00:00.000",
     "one_week_return_pct":-8.7525398327,
     "one_month_return_pct":7.6084080839,
     "trailing_vol_pct":42.577497849,
@@ -15,7 +16,8 @@
   },
   {
     "ticker":"CNX",
-    "as_of_date":"2026-04-02T00:00:00.000",
+    "as_of_date":"2026-03-03T00:00:00.000",
+    "analysis_end_date":"2026-04-02T00:00:00.000",
     "one_week_return_pct":-3.2491859325,
     "one_month_return_pct":-7.6354110584,
     "trailing_vol_pct":33.5971076907,
@@ -29,7 +31,8 @@
   },
   {
     "ticker":"EQT",
-    "as_of_date":"2026-04-02T00:00:00.000",
+    "as_of_date":"2026-03-03T00:00:00.000",
+    "analysis_end_date":"2026-04-02T00:00:00.000",
     "one_week_return_pct":-10.7089437362,
     "one_month_return_pct":-3.1001458018,
     "trailing_vol_pct":29.8901028526,
@@ -43,7 +46,8 @@
   },
   {
     "ticker":"FTI",
-    "as_of_date":"2026-04-02T00:00:00.000",
+    "as_of_date":"2026-03-03T00:00:00.000",
+    "analysis_end_date":"2026-04-02T00:00:00.000",
     "one_week_return_pct":0.981081749,
     "one_month_return_pct":7.4788687527,
     "trailing_vol_pct":32.399563244,
@@ -57,7 +61,8 @@
   },
   {
     "ticker":"NG=F",
-    "as_of_date":"2026-04-02T00:00:00.000",
+    "as_of_date":"2026-03-03T00:00:00.000",
+    "analysis_end_date":"2026-04-02T00:00:00.000",
     "one_week_return_pct":-6.6355490281,
     "one_month_return_pct":-8.316959946,
     "trailing_vol_pct":53.6547587297,
@@ -71,7 +76,8 @@
   },
   {
     "ticker":"RRC",
-    "as_of_date":"2026-04-02T00:00:00.000",
+    "as_of_date":"2026-03-03T00:00:00.000",
+    "analysis_end_date":"2026-04-02T00:00:00.000",
     "one_week_return_pct":-7.217597557,
     "one_month_return_pct":4.8929830048,
     "trailing_vol_pct":33.554030398,
@@ -85,7 +91,8 @@
   },
   {
     "ticker":"UNG",
-    "as_of_date":"2026-04-02T00:00:00.000",
+    "as_of_date":"2026-03-03T00:00:00.000",
+    "analysis_end_date":"2026-04-02T00:00:00.000",
     "one_week_return_pct":-4.1385115271,
     "one_month_return_pct":-7.573284786,
     "trailing_vol_pct":46.6289711853,
@@ -99,7 +106,8 @@
   },
   {
     "ticker":"USO",
-    "as_of_date":"2026-04-02T00:00:00.000",
+    "as_of_date":"2026-03-03T00:00:00.000",
+    "analysis_end_date":"2026-04-02T00:00:00.000",
     "one_week_return_pct":17.6189626952,
     "one_month_return_pct":52.9046594626,
     "trailing_vol_pct":73.510253425,
