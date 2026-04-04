@@ -360,7 +360,7 @@ def monthly_returns_table(close: pd.DataFrame) -> str:
     return '<div class="mini-grid">' + "".join(tables) + "</div>"
 
 
-def sentiment_section_html(sentiment_df: pd.DataFrame) -> str:
+def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFrame) -> str:
     if sentiment_df.empty:
         return """
         <section class="panel">
@@ -369,19 +369,33 @@ def sentiment_section_html(sentiment_df: pd.DataFrame) -> str:
         </section>
         """
 
+    ngf_weekly = pd.Series(dtype=float)
+    if "NG=F" in market_close.columns:
+        ngf_weekly = market_close["NG=F"].pct_change() * 100
+
+    sentiment_df = sentiment_df.copy()
+    if not ngf_weekly.empty:
+        sentiment_df["ngf_change_pct"] = sentiment_df["period"].map(ngf_weekly)
+    else:
+        sentiment_df["ngf_change_pct"] = pd.NA
+
     chart = sentiment_chart(sentiment_df)
     recent = sentiment_df.sort_values("period", ascending=False).head(8).copy()
-    rows = "".join(
-        "<tr>"
-        f"<td>{row.period.strftime('%Y-%m-%d')}</td>"
-        f"<td>{row.weekly_change_bcf:+.0f} Bcf</td>"
-        f"<td>{row.abs_zscore:.2f}</td>"
-        f"<td>{row.inventory_signal}</td>"
-        f"<td>{row.finbert_label} ({row.finbert_score:.2f})</td>"
-        f"<td>{row.vader_compound:.2f}</td>"
-        "</tr>"
-        for row in recent.itertuples()
-    )
+    row_chunks = []
+    for row in recent.itertuples():
+        ngf_cell = f"{row.ngf_change_pct:+.1f}%" if pd.notna(row.ngf_change_pct) else ""
+        row_chunks.append(
+            "<tr>"
+            f"<td>{row.period.strftime('%Y-%m-%d')}</td>"
+            f"<td>{row.weekly_change_bcf:+.0f} Bcf</td>"
+            f"<td>{ngf_cell}</td>"
+            f"<td>{row.abs_zscore:.2f}</td>"
+            f"<td>{row.inventory_signal}</td>"
+            f"<td>{row.finbert_label} ({row.finbert_score:.2f})</td>"
+            f"<td>{row.vader_compound:.2f}</td>"
+            "</tr>"
+        )
+    rows = "".join(row_chunks)
     vader_mean = sentiment_df["vader_compound"].mean()
     finbert_counts = sentiment_df["finbert_label"].value_counts()
     top_finbert = finbert_counts.index[0] if not finbert_counts.empty else "n/a"
@@ -397,6 +411,7 @@ def sentiment_section_html(sentiment_df: pd.DataFrame) -> str:
           <tr>
             <th>Week ending</th>
             <th>Weekly change</th>
+            <th>NG=F change</th>
             <th>Shock z-score</th>
             <th>Inventory signal</th>
             <th>FinBERT</th>
@@ -701,7 +716,7 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, senti
       {regional_table(release)}
     </section>
 
-    {sentiment_section_html(sentiment_df)}
+    {sentiment_section_html(sentiment_df, market_close)}
 
     <section class="panel">
       <h2>Market and portfolio</h2>
