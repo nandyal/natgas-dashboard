@@ -21,6 +21,7 @@ from dashboard_data import (
 
 BASE_DIR = Path(__file__).resolve().parent
 MARKET_SENTIMENT_CSV = BASE_DIR / "market_sentiment_events.csv"
+MARKET_SENTIMENT_RECENT_CSV = BASE_DIR / "market_sentiment_recent.csv"
 
 
 st.set_page_config(page_title="Natural Gas Market Dashboard", layout="wide")
@@ -38,12 +39,20 @@ def get_market_sentiment() -> pd.DataFrame:
     return pd.read_csv(MARKET_SENTIMENT_CSV, parse_dates=["period"])
 
 
+@st.cache_data(show_spinner=False)
+def get_recent_market_sentiment() -> pd.DataFrame:
+    if not MARKET_SENTIMENT_RECENT_CSV.exists():
+        return pd.DataFrame()
+    return pd.read_csv(MARKET_SENTIMENT_RECENT_CSV, parse_dates=["as_of_date"])
+
+
 st.title("Natural Gas Market Dashboard")
 st.caption("Separate market dashboard for stocks, ETFs, natural gas futures, portfolio construction, and sentiment.")
 
 market_start = st.sidebar.date_input("Market data start", value=pd.Timestamp("2019-01-01"))
 market = get_market_data(pd.Timestamp(market_start).strftime("%Y-%m-%d"))
 sentiment = get_market_sentiment()
+recent_sentiment = get_recent_market_sentiment()
 
 norm = normalized_prices(market)
 monthly = monthly_returns(market)
@@ -88,11 +97,11 @@ with tabs[3]:
         fig.update_layout(height=520, margin=dict(l=20, r=20, t=20, b=20))
         st.plotly_chart(fig, width="stretch")
 
-        latest = sentiment.sort_values(["ticker", "period"], ascending=[True, False]).groupby("ticker").head(1)
-        st.dataframe(
-            latest[["ticker", "period", "monthly_return_pct", "finbert_label", "finbert_score", "vader_compound", "forward_1m_return_pct"]],
-            width="stretch",
-        )
+        if not recent_sentiment.empty:
+            st.dataframe(
+                recent_sentiment[["ticker", "as_of_date", "one_week_return_pct", "finbert_label", "finbert_score", "vader_compound", "one_month_return_pct"]],
+                width="stretch",
+            )
 
 with tabs[4]:
     ticker = st.selectbox("Ticker", monthly.columns.tolist(), index=0)

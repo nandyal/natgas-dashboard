@@ -23,12 +23,19 @@ BASE_DIR = Path(__file__).resolve().parent
 DOCS_DIR = BASE_DIR / "docs"
 REPORT_PATH = DOCS_DIR / "market.html"
 SENTIMENT_CSV = BASE_DIR / "market_sentiment_events.csv"
+RECENT_SENTIMENT_CSV = BASE_DIR / "market_sentiment_recent.csv"
 
 
 def load_market_sentiment() -> pd.DataFrame:
     if not SENTIMENT_CSV.exists():
         return pd.DataFrame()
     return pd.read_csv(SENTIMENT_CSV, parse_dates=["period"])
+
+
+def load_recent_market_sentiment() -> pd.DataFrame:
+    if not RECENT_SENTIMENT_CSV.exists():
+        return pd.DataFrame()
+    return pd.read_csv(RECENT_SENTIMENT_CSV, parse_dates=["as_of_date"])
 
 
 def nav_html() -> str:
@@ -140,17 +147,17 @@ def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
-def sentiment_table_html(sentiment_df: pd.DataFrame) -> str:
-    latest = sentiment_df.sort_values(["ticker", "period"], ascending=[True, False]).groupby("ticker").head(1)
+def sentiment_table_html(recent_sentiment_df: pd.DataFrame) -> str:
+    latest = recent_sentiment_df.sort_values("ticker").copy()
     rows = "".join(
-        f"<tr><td>{row.ticker}</td><td>{row.period.strftime('%Y-%m-%d')}</td><td>{row.monthly_return_pct:+.1f}%</td><td>{row.finbert_label}<br>({row.finbert_score:.2f})</td><td>{row.vader_compound:.2f}</td><td>{row.forward_1m_return_pct:+.1f}%</td></tr>"
+        f"<tr><td>{row.ticker}</td><td>{row.as_of_date.strftime('%Y-%m-%d')}</td><td>{row.one_week_return_pct:+.1f}%</td><td>{row.finbert_label}<br>({row.finbert_score:.2f})</td><td>{row.vader_compound:.2f}</td><td>{row.one_month_return_pct:+.1f}%</td></tr>"
         for row in latest.itertuples()
     )
     return f"""
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Ticker</th><th>Latest sentiment month</th><th>Monthly return</th><th>FinBERT</th><th>VADER</th><th>Next complete month price change</th></tr>
+          <tr><th>Ticker</th><th>As of date</th><th>1 week return</th><th>FinBERT</th><th>VADER</th><th>1 month return</th></tr>
         </thead>
         <tbody>{rows}</tbody>
       </table>
@@ -158,7 +165,7 @@ def sentiment_table_html(sentiment_df: pd.DataFrame) -> str:
     """
 
 
-def sentiment_section_html(sentiment_df: pd.DataFrame) -> str:
+def sentiment_section_html(sentiment_df: pd.DataFrame, recent_sentiment_df: pd.DataFrame) -> str:
     if sentiment_df.empty:
         return """
         <section class="panel">
@@ -169,15 +176,15 @@ def sentiment_section_html(sentiment_df: pd.DataFrame) -> str:
     return f"""
     <section class="panel">
       <h2>Stock, ETF, and futures sentiment</h2>
-      <p>This section applies FinBERT and VADER to monthly price-event summaries for each tracked stock, ETF, and natural gas futures series. The chart and table also show the next complete calendar-month price change after the sentiment observation.</p>
-      <p class="small">These NLP labels describe the tone of price-event summaries, so they should be read alongside the realized next-month price change rather than as standalone trading signals.</p>
+      <p>This section applies FinBERT and VADER to monthly price-event summaries for each tracked stock, ETF, and natural gas futures series. The chart shows the longer historical pattern, while the table below summarizes the last 30 days as of today.</p>
+      <p class="small">These NLP labels describe the tone of price-event summaries, so they should be read alongside realized price moves rather than as standalone trading signals.</p>
       {sentiment_chart(sentiment_df)}
-      {sentiment_table_html(sentiment_df)}
+      {sentiment_table_html(recent_sentiment_df)}
     </section>
     """
 
 
-def page_html(close: pd.DataFrame, sentiment_df: pd.DataFrame) -> str:
+def page_html(close: pd.DataFrame, sentiment_df: pd.DataFrame, recent_sentiment_df: pd.DataFrame) -> str:
     refreshed = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return f"""<!doctype html>
 <html lang="en">
@@ -227,7 +234,7 @@ def page_html(close: pd.DataFrame, sentiment_df: pd.DataFrame) -> str:
     </section>
 
     {portfolio_summary_html(close)}
-    {sentiment_section_html(sentiment_df)}
+    {sentiment_section_html(sentiment_df, recent_sentiment_df)}
 
     <section class="panel">
       <h2>Calendar monthly returns</h2>
@@ -243,7 +250,8 @@ def main() -> int:
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     close = fetch_market_prices(DEFAULT_TICKERS, start="2019-01-01")
     sentiment_df = load_market_sentiment()
-    REPORT_PATH.write_text(page_html(close, sentiment_df), encoding="utf-8")
+    recent_sentiment_df = load_recent_market_sentiment()
+    REPORT_PATH.write_text(page_html(close, sentiment_df, recent_sentiment_df), encoding="utf-8")
     print(f"Wrote {REPORT_PATH}")
     return 0
 
