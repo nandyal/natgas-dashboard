@@ -84,8 +84,8 @@ def correlation_chart(close: pd.DataFrame) -> str:
 def portfolio_chart(close: pd.DataFrame) -> str:
     portfolio = build_optimized_portfolio(close, PORTFOLIO_TICKERS)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=portfolio.index.index, y=portfolio.index.values, mode="lines", line=dict(width=3, color="#0f766e"), name="Optimized portfolio"))
-    fig.update_layout(title="Optimized portfolio performance", template="plotly_white", height=440, margin=dict(l=20, r=20, t=60, b=20), yaxis_title="Indexed to 100")
+    fig.add_trace(go.Scatter(x=portfolio.index.index, y=portfolio.index.values, mode="lines", line=dict(width=3, color="#0f766e"), name="Kelly portfolio"))
+    fig.update_layout(title="Kelly portfolio performance", template="plotly_white", height=440, margin=dict(l=20, r=20, t=60, b=20), yaxis_title="Indexed to 100")
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
@@ -99,14 +99,15 @@ def portfolio_summary_html(close: pd.DataFrame) -> str:
     return f"""
     <div class="panel">
       <h2>Optimized allocation</h2>
-      <p>The portfolio is optimized on a long-only basis for risk-adjusted return using historical daily returns across selected stocks and ETFs, with a rebalance every 2 years.</p>
+      <p>The portfolio uses a bounded long-only Kelly Criterion allocation across selected stocks and ETFs, re-estimated from trailing daily returns and rebalanced every 2 years.</p>
       <div class="table-wrap" style="margin-top:14px;">
         <table>
           <thead><tr>{history_header}</tr></thead>
           <tbody>{history_rows}</tbody>
         </table>
       </div>
-      <p class="small"><strong>Annualized return:</strong> {portfolio.annual_return * 100:.1f}%<br>
+      <p class="small"><strong>Annualized Kelly growth:</strong> {portfolio.kelly_growth_rate * 100:.1f}%<br>
+      <strong>Annualized return:</strong> {portfolio.annual_return * 100:.1f}%<br>
       <strong>Annualized volatility:</strong> {portfolio.annual_volatility * 100:.1f}%<br>
       <strong>Sharpe ratio:</strong> {portfolio.sharpe_ratio:.2f}</p>
     </div>

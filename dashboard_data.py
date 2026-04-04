@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 import yfinance as yf
@@ -29,6 +30,7 @@ class PortfolioSummary:
     rebalance_weights: pd.DataFrame
     returns: pd.Series
     index: pd.Series
+    kelly_growth_rate: float
     annual_return: float
     annual_volatility: float
     sharpe_ratio: float
@@ -144,30 +146,26 @@ def correlation_matrix(close: pd.DataFrame) -> pd.DataFrame:
 
 def _optimize_portfolio_weights(
     returns: pd.DataFrame,
-    risk_free_rate: float = 0.02,
     max_weight: float = 0.45,
 ) -> pd.Series:
     available = list(returns.columns)
     if len(returns) < 20:
         return pd.Series(1 / len(available), index=available)
-    annualized_returns = returns.mean() * 252
-    annualized_cov = returns.cov() * 252
 
     n_assets = len(available)
     start = [1 / n_assets] * n_assets
     bounds = [(0.0, min(max_weight, 1.0))] * n_assets
     constraints = [{"type": "eq", "fun": lambda w: sum(w) - 1}]
 
-    def negative_sharpe(weights: list[float]) -> float:
+    def negative_kelly_growth(weights: list[float]) -> float:
         weights_series = pd.Series(weights, index=available)
-        portfolio_return = float((annualized_returns * weights_series).sum())
-        portfolio_vol = float((weights_series.T @ annualized_cov @ weights_series) ** 0.5)
-        if portfolio_vol == 0:
+        portfolio_returns = returns.mul(weights_series, axis=1).sum(axis=1)
+        if (portfolio_returns <= -0.999999).any():
             return 1e9
-        return -((portfolio_return - risk_free_rate) / portfolio_vol)
+        return -float(np.log1p(portfolio_returns).mean())
 
     result = minimize(
-        negative_sharpe,
+        negative_kelly_growth,
         start,
         method="SLSQP",
         bounds=bounds,
@@ -215,7 +213,6 @@ def build_optimized_portfolio(
             lookback = returns.loc[:rebalance_date]
         weights = _optimize_portfolio_weights(
             lookback,
-            risk_free_rate=risk_free_rate,
             max_weight=max_weight,
         )
         latest_weights = weights
@@ -232,6 +229,7 @@ def build_optimized_portfolio(
 
     portfolio_returns = pd.concat(period_returns).sort_index()
     cumulative = (1 + portfolio_returns).cumprod() * 100
+    kelly_growth_rate = float(np.log1p(portfolio_returns).mean() * 252)
     annual_return = float(portfolio_returns.mean() * 252)
     annual_volatility = float(portfolio_returns.std() * (252 ** 0.5))
     sharpe_ratio = 0.0 if annual_volatility == 0 else float((annual_return - risk_free_rate) / annual_volatility)
@@ -241,6 +239,7 @@ def build_optimized_portfolio(
         rebalance_weights=rebalance_weights,
         returns=portfolio_returns,
         index=cumulative,
+        kelly_growth_rate=kelly_growth_rate,
         annual_return=annual_return,
         annual_volatility=annual_volatility,
         sharpe_ratio=sharpe_ratio,
