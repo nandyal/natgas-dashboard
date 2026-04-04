@@ -391,7 +391,7 @@ def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFram
             f"<td>{ngf_cell}</td>"
             f"<td>{row.abs_zscore:.2f}</td>"
             f"<td>{row.inventory_signal}</td>"
-            f"<td>{row.finbert_label} ({row.finbert_score:.2f})</td>"
+            f"<td>{row.finbert_label}<br>({row.finbert_score:.2f})</td>"
             f"<td>{row.vader_compound:.2f}</td>"
             "</tr>"
         )
@@ -412,7 +412,7 @@ def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFram
           <tr>
             <th>Week ending</th>
             <th>Weekly change</th>
-            <th>Weekly Natural Gas Price</th>
+            <th>Weekly Natural<br>Gas Price</th>
             <th>Shock z-score</th>
             <th>Inventory signal</th>
             <th>FinBERT</th>
