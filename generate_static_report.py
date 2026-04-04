@@ -406,12 +406,13 @@ def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFram
       <p class="small">Important: the NLP labels reflect text tone, not necessarily gas-price direction. For example, FinBERT can classify a large inventory drawdown as textually negative even when the inventory shock is bullish for natural gas prices.</p>
       {chart}
       <p class="small"><strong>Average VADER compound:</strong> {vader_mean:.2f}. <strong>Most common FinBERT label:</strong> {top_finbert}.</p>
+      <div class="table-wrap">
       <table>
         <thead>
           <tr>
             <th>Week ending</th>
             <th>Weekly change</th>
-            <th>NG=F change</th>
+            <th>Weekly Natural Gas Price</th>
             <th>Shock z-score</th>
             <th>Inventory signal</th>
             <th>FinBERT</th>
@@ -420,6 +421,7 @@ def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFram
         </thead>
         <tbody>{rows}</tbody>
       </table>
+      </div>
     </section>
     """
 
@@ -639,6 +641,9 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, senti
       margin-bottom: 10px;
     }}
     .mini-table {{
+      overflow-x: auto;
+    }}
+    .table-wrap {{
       overflow-x: auto;
     }}
     .weights-box {{
