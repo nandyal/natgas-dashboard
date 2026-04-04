@@ -158,7 +158,7 @@ def relative_strength_index(close: pd.DataFrame, window: int = 14) -> pd.DataFra
 
 def _optimize_portfolio_weights(
     returns: pd.DataFrame,
-    method: str = "sharpe",
+    method: str = "min_volatility",
     risk_free_rate: float = 0.02,
     max_long_weight: float = 0.55,
     max_short_weight: float = 0.25,
@@ -192,10 +192,12 @@ def _optimize_portfolio_weights(
                 return 1e9
             return -float(np.log1p(portfolio_returns).mean())
 
-        portfolio_return = float((annualized_returns * weights_series).sum())
         portfolio_volatility = float(np.sqrt(weights_series.T @ annualized_cov @ weights_series))
         if portfolio_volatility <= 0:
             return 1e9
+        if method == "min_volatility":
+            return portfolio_volatility
+        portfolio_return = float((annualized_returns * weights_series).sum())
         return -((portfolio_return - risk_free_rate) / portfolio_volatility)
 
     result = minimize(
@@ -253,7 +255,7 @@ def _apply_position_rules(
 def build_optimized_portfolio(
     close: pd.DataFrame,
     tickers: list[str] | None = None,
-    method: str = "sharpe",
+    method: str = "min_volatility",
     risk_free_rate: float = 0.02,
     max_long_weight: float = 0.55,
     max_short_weight: float = 0.25,
@@ -344,7 +346,7 @@ def compare_portfolio_methods(
     monthly_short_stop: float = 0.10,
 ) -> dict[str, PortfolioSummary]:
     results: dict[str, PortfolioSummary] = {}
-    for method in ["kelly", "sharpe"]:
+    for method in ["kelly", "sharpe", "min_volatility"]:
         results[method] = build_optimized_portfolio(
             close=close,
             tickers=tickers,
