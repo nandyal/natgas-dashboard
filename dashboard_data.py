@@ -26,6 +26,7 @@ class InventorySummary:
 
 @dataclass(frozen=True)
 class PortfolioSummary:
+    method: str
     weights: pd.Series
     rebalance_weights: pd.DataFrame
     returns: pd.Series
@@ -157,6 +158,8 @@ def relative_strength_index(close: pd.DataFrame, window: int = 14) -> pd.DataFra
 
 def _optimize_portfolio_weights(
     returns: pd.DataFrame,
+    method: str = "sharpe",
+    risk_free_rate: float = 0.02,
     max_long_weight: float = 0.55,
     max_short_weight: float = 0.25,
 ) -> pd.Series:
@@ -178,15 +181,25 @@ def _optimize_portfolio_weights(
     bounds = [(-min(max_short_weight, 1.0), min(max_long_weight, 1.0))] * n_assets
     constraints = [{"type": "eq", "fun": lambda w: sum(w) - 1}]
 
-    def negative_kelly_growth(weights: list[float]) -> float:
+    annualized_returns = returns.mean() * 252
+    annualized_cov = returns.cov() * 252
+
+    def objective(weights: list[float]) -> float:
         weights_series = pd.Series(weights, index=available)
-        portfolio_returns = returns.mul(weights_series, axis=1).sum(axis=1)
-        if (portfolio_returns <= -0.999999).any():
+        if method == "kelly":
+            portfolio_returns = returns.mul(weights_series, axis=1).sum(axis=1)
+            if (portfolio_returns <= -0.999999).any():
+                return 1e9
+            return -float(np.log1p(portfolio_returns).mean())
+
+        portfolio_return = float((annualized_returns * weights_series).sum())
+        portfolio_volatility = float(np.sqrt(weights_series.T @ annualized_cov @ weights_series))
+        if portfolio_volatility <= 0:
             return 1e9
-        return -float(np.log1p(portfolio_returns).mean())
+        return -((portfolio_return - risk_free_rate) / portfolio_volatility)
 
     result = minimize(
-        negative_kelly_growth,
+        objective,
         start,
         method="SLSQP",
         bounds=bounds,
@@ -240,6 +253,7 @@ def _apply_position_rules(
 def build_optimized_portfolio(
     close: pd.DataFrame,
     tickers: list[str] | None = None,
+    method: str = "sharpe",
     risk_free_rate: float = 0.02,
     max_long_weight: float = 0.55,
     max_short_weight: float = 0.25,
@@ -276,6 +290,8 @@ def build_optimized_portfolio(
             lookback = returns.loc[:rebalance_date]
         weights = _optimize_portfolio_weights(
             lookback,
+            method=method,
+            risk_free_rate=risk_free_rate,
             max_long_weight=max_long_weight,
             max_short_weight=max_short_weight,
         )
@@ -306,6 +322,7 @@ def build_optimized_portfolio(
     sharpe_ratio = 0.0 if annual_volatility == 0 else float((annual_return - risk_free_rate) / annual_volatility)
     rebalance_weights = pd.DataFrame(rebalance_history).fillna(0.0)
     return PortfolioSummary(
+        method=method,
         weights=latest_weights.sort_values(ascending=False),
         rebalance_weights=rebalance_weights,
         returns=portfolio_returns,
@@ -315,6 +332,30 @@ def build_optimized_portfolio(
         annual_volatility=annual_volatility,
         sharpe_ratio=sharpe_ratio,
     )
+
+
+def compare_portfolio_methods(
+    close: pd.DataFrame,
+    tickers: list[str] | None = None,
+    risk_free_rate: float = 0.02,
+    max_long_weight: float = 0.55,
+    max_short_weight: float = 0.25,
+    rebalance_years: int = 1,
+    monthly_short_stop: float = 0.10,
+) -> dict[str, PortfolioSummary]:
+    results: dict[str, PortfolioSummary] = {}
+    for method in ["kelly", "sharpe"]:
+        results[method] = build_optimized_portfolio(
+            close=close,
+            tickers=tickers,
+            method=method,
+            risk_free_rate=risk_free_rate,
+            max_long_weight=max_long_weight,
+            max_short_weight=max_short_weight,
+            rebalance_years=rebalance_years,
+            monthly_short_stop=monthly_short_stop,
+        )
+    return results
 
 
 def available_tickers(close: pd.DataFrame, requested: list[str]) -> tuple[list[str], list[str]]:

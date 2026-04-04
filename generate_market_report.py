@@ -12,6 +12,7 @@ from dashboard_data import (
     PORTFOLIO_TICKERS,
     build_optimized_portfolio,
     calendar_return_table,
+    compare_portfolio_methods,
     correlation_matrix,
     fetch_market_prices,
     monthly_returns,
@@ -82,15 +83,17 @@ def correlation_chart(close: pd.DataFrame) -> str:
 
 
 def portfolio_chart(close: pd.DataFrame) -> str:
-    portfolio = build_optimized_portfolio(close, PORTFOLIO_TICKERS)
+    portfolio = build_optimized_portfolio(close, PORTFOLIO_TICKERS, method="sharpe")
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=portfolio.index.index, y=portfolio.index.values, mode="lines", line=dict(width=3, color="#0f766e"), name="Long-short Kelly portfolio"))
-    fig.update_layout(title="Long-short Kelly portfolio performance", template="plotly_white", height=440, margin=dict(l=20, r=20, t=60, b=20), yaxis_title="Indexed to 100")
+    fig.add_trace(go.Scatter(x=portfolio.index.index, y=portfolio.index.values, mode="lines", line=dict(width=3, color="#0f766e"), name="Long-short Sharpe-maximizing portfolio"))
+    fig.update_layout(title="Long-short Sharpe-maximizing portfolio performance", template="plotly_white", height=440, margin=dict(l=20, r=20, t=60, b=20), yaxis_title="Indexed to 100")
     return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
 def portfolio_summary_html(close: pd.DataFrame) -> str:
-    portfolio = build_optimized_portfolio(close, PORTFOLIO_TICKERS)
+    comparison = compare_portfolio_methods(close, PORTFOLIO_TICKERS)
+    kelly_portfolio = comparison["kelly"]
+    portfolio = comparison["sharpe"]
     history_header = "".join(f"<th>{col}</th>" for col in ["Rebalance date", *portfolio.rebalance_weights.columns.tolist()])
     history_rows = ""
     for date, row in portfolio.rebalance_weights.iterrows():
@@ -99,14 +102,15 @@ def portfolio_summary_html(close: pd.DataFrame) -> str:
     return f"""
     <div class="panel">
       <h2>Optimized allocation</h2>
-      <p>The portfolio uses a bounded long-short Kelly Criterion allocation across selected stocks and ETFs, re-estimated from trailing daily returns and rebalanced annually. Short positions are exited once their monthly loss exceeds 10%, can flip into a buy position when RSI falls below 20, and active long positions are sold when RSI rises above 80.</p>
+      <p>The portfolio compares a bounded long-short Kelly allocation against a bounded long-short Sharpe maximizer using the same annual rebalance, monthly short-stop, and RSI overlay. The Sharpe-maximizing portfolio is shown here by design choice, while the table also reports the realized Sharpe comparison over the shared backtest window.</p>
       <div class="table-wrap" style="margin-top:14px;">
         <table>
           <thead><tr>{history_header}</tr></thead>
           <tbody>{history_rows}</tbody>
         </table>
       </div>
-      <p class="small"><strong>Annualized Kelly growth:</strong> {portfolio.kelly_growth_rate * 100:.1f}%<br>
+      <p class="small"><strong>Method comparison:</strong> Kelly Sharpe {kelly_portfolio.sharpe_ratio:.2f} vs Sharpe-maximizer {portfolio.sharpe_ratio:.2f}</p>
+      <p class="small"><strong>Annualized log growth:</strong> {portfolio.kelly_growth_rate * 100:.1f}%<br>
       <strong>Annualized return:</strong> {portfolio.annual_return * 100:.1f}%<br>
       <strong>Annualized volatility:</strong> {portfolio.annual_volatility * 100:.1f}%<br>
       <strong>Sharpe ratio:</strong> {portfolio.sharpe_ratio:.2f}</p>
