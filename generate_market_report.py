@@ -99,7 +99,7 @@ def portfolio_summary_html(close: pd.DataFrame) -> str:
     return f"""
     <div class="panel">
       <h2>Optimized allocation</h2>
-      <p>The portfolio uses a bounded long-short Kelly Criterion allocation across selected stocks and ETFs, re-estimated from trailing daily returns and rebalanced annually. Short positions are exited for the rest of the calendar month once their loss exceeds 10%.</p>
+      <p>The portfolio uses a bounded long-short Kelly Criterion allocation across selected stocks and ETFs, re-estimated from trailing daily returns and rebalanced annually. Short positions are exited once their monthly loss exceeds 10%, can flip into a buy position when RSI falls below 20, and active long positions are sold when RSI rises above 80.</p>
       <div class="table-wrap" style="margin-top:14px;">
         <table>
           <thead><tr>{history_header}</tr></thead>

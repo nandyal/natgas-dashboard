@@ -82,7 +82,8 @@ with tabs[2]:
     st.dataframe(rebalance_table, width="stretch")
     st.caption(
         f"Portfolio uses a bounded long-short Kelly Criterion allocation with an annual rebalance. "
-        f"Short positions are exited for the rest of a calendar month after a 10% loss. "
+        f"Short positions are exited after a 10% monthly loss, can flip long when RSI falls below 20, "
+        f"and active long positions are sold when RSI rises above 80. "
         f"Annualized Kelly growth {portfolio.kelly_growth_rate * 100:.1f}%, "
         f"annualized return {portfolio.annual_return * 100:.1f}%, "
         f"annualized volatility {portfolio.annual_volatility * 100:.1f}%, "

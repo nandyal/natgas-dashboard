@@ -144,6 +144,17 @@ def correlation_matrix(close: pd.DataFrame) -> pd.DataFrame:
     return daily_returns(close).corr()
 
 
+def relative_strength_index(close: pd.DataFrame, window: int = 14) -> pd.DataFrame:
+    delta = close.diff()
+    gains = delta.clip(lower=0.0)
+    losses = -delta.clip(upper=0.0)
+    avg_gain = gains.ewm(alpha=1 / window, min_periods=window, adjust=False).mean()
+    avg_loss = losses.ewm(alpha=1 / window, min_periods=window, adjust=False).mean()
+    rs = avg_gain.divide(avg_loss.replace(0.0, np.nan))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(50.0)
+
+
 def _optimize_portfolio_weights(
     returns: pd.DataFrame,
     max_long_weight: float = 0.55,
@@ -187,10 +198,13 @@ def _optimize_portfolio_weights(
     return pd.Series(start, index=available)
 
 
-def _apply_short_stop_loss(
+def _apply_position_rules(
     period_returns: pd.DataFrame,
+    period_rsi: pd.DataFrame,
     weights: pd.Series,
     monthly_short_stop: float = 0.10,
+    resume_long_rsi: float = 20.0,
+    exit_long_rsi: float = 80.0,
 ) -> pd.Series:
     simulated_returns: list[float] = []
     simulated_index: list[pd.Timestamp] = []
@@ -206,10 +220,19 @@ def _apply_short_stop_loss(
             simulated_index.append(date)
 
             month_cumulative = month_cumulative.mul(1.0 + row.fillna(0.0), fill_value=1.0)
+            daily_rsi = period_rsi.loc[date].reindex(weights.index).fillna(50.0)
             short_breach = (weights < 0) & (~short_exited) & ((month_cumulative - 1.0) >= monthly_short_stop)
             if short_breach.any():
                 active_weights.loc[short_breach] = 0.0
                 short_exited.loc[short_breach] = True
+
+            resume_long = short_exited & (daily_rsi <= resume_long_rsi)
+            if resume_long.any():
+                active_weights.loc[resume_long] = weights.loc[resume_long].abs()
+
+            sell_long = (active_weights > 0) & (daily_rsi >= exit_long_rsi)
+            if sell_long.any():
+                active_weights.loc[sell_long] = 0.0
 
     return pd.Series(simulated_returns, index=pd.DatetimeIndex(simulated_index)).sort_index()
 
@@ -229,6 +252,7 @@ def build_optimized_portfolio(
         raise ValueError("None of the requested portfolio tickers are available.")
 
     portfolio_close = close[available].dropna().copy()
+    rsi = relative_strength_index(portfolio_close)
     returns = portfolio_close.pct_change().dropna()
     if returns.empty:
         raise ValueError("Not enough price history to build portfolio returns.")
@@ -266,8 +290,9 @@ def build_optimized_portfolio(
         period_slice = returns.loc[mask]
         if not period_slice.empty:
             period_returns.append(
-                _apply_short_stop_loss(
+                _apply_position_rules(
                     period_slice,
+                    rsi.loc[period_slice.index],
                     weights,
                     monthly_short_stop=monthly_short_stop,
                 )
