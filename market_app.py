@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+from dashboard_data import (
+    DEFAULT_TICKERS,
+    PORTFOLIO_TICKERS,
+    build_optimized_portfolio,
+    calendar_return_table,
+    correlation_matrix,
+    fetch_market_prices,
+    monthly_returns,
+    normalized_prices,
+)
+
+
+BASE_DIR = Path(__file__).resolve().parent
+MARKET_SENTIMENT_CSV = BASE_DIR / "market_sentiment_events.csv"
+
+
+st.set_page_config(page_title="Natural Gas Market Dashboard", layout="wide")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_market_data(start_date: str) -> pd.DataFrame:
+    return fetch_market_prices(DEFAULT_TICKERS, start=start_date)
+
+
+@st.cache_data(show_spinner=False)
+def get_market_sentiment() -> pd.DataFrame:
+    if not MARKET_SENTIMENT_CSV.exists():
+        return pd.DataFrame()
+    return pd.read_csv(MARKET_SENTIMENT_CSV, parse_dates=["period"])
+
+
+st.title("Natural Gas Market Dashboard")
+st.caption("Separate market dashboard for stocks, ETFs, natural gas futures, portfolio construction, and sentiment.")
+
+market_start = st.sidebar.date_input("Market data start", value=pd.Timestamp("2019-01-01"))
+market = get_market_data(pd.Timestamp(market_start).strftime("%Y-%m-%d"))
+sentiment = get_market_sentiment()
+
+norm = normalized_prices(market)
+monthly = monthly_returns(market)
+correlation = correlation_matrix(market)
+portfolio = build_optimized_portfolio(market, PORTFOLIO_TICKERS)
+
+tabs = st.tabs(["Normalized Prices", "Correlation", "Portfolio", "Sentiment", "Monthly Returns"])
+
+with tabs[0]:
+    fig = px.line(norm.reset_index(), x="Date", y=norm.columns, labels={"value": "Indexed to 100", "variable": "Ticker"})
+    fig.update_layout(height=500, margin=dict(l=20, r=20, t=20, b=20))
+    st.plotly_chart(fig, width="stretch")
+
+with tabs[1]:
+    heatmap = px.imshow(correlation.round(2), text_auto=True, color_continuous_scale="RdBu", origin="lower", aspect="auto")
+    heatmap.update_layout(height=540, margin=dict(l=20, r=20, t=20, b=20))
+    st.plotly_chart(heatmap, width="stretch")
+
+with tabs[2]:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=portfolio.index.index, y=portfolio.index.values, mode="lines", line=dict(width=3, color="#0d6e6e"), name="Optimized portfolio"))
+    fig.update_layout(title="Optimized portfolio performance", height=460, margin=dict(l=20, r=20, t=50, b=20), yaxis_title="Indexed to 100")
+    st.plotly_chart(fig, width="stretch")
+    st.dataframe(portfolio.weights.rename("weight").mul(100).round(1).to_frame(), width="stretch")
+    st.caption(
+        f"Annualized return {portfolio.annual_return * 100:.1f}%, "
+        f"annualized volatility {portfolio.annual_volatility * 100:.1f}%, "
+        f"Sharpe ratio {portfolio.sharpe_ratio:.2f}."
+    )
+
+with tabs[3]:
+    if sentiment.empty:
+        st.write("Run `python market_sentiment_analysis.py` to generate stock, ETF, and futures sentiment results.")
+    else:
+        sentiment = sentiment.sort_values("period")
+        finbert_numeric = sentiment["finbert_label"].map({"negative": -1, "neutral": 0, "positive": 1}).fillna(0)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=sentiment["period"], y=sentiment["monthly_return_pct"], mode="markers", name="Monthly return (%)", text=sentiment["ticker"]))
+        fig.add_trace(go.Scatter(x=sentiment["period"], y=sentiment["forward_21d_return_pct"], mode="markers", name="Forward 1M return (%)", text=sentiment["ticker"]))
+        fig.add_trace(go.Scatter(x=sentiment["period"], y=sentiment["vader_compound"], mode="lines+markers", name="VADER"))
+        fig.add_trace(go.Scatter(x=sentiment["period"], y=finbert_numeric, mode="lines+markers", name="FinBERT"))
+        fig.update_layout(height=520, margin=dict(l=20, r=20, t=20, b=20))
+        st.plotly_chart(fig, width="stretch")
+
+        latest = sentiment.sort_values(["ticker", "period"], ascending=[True, False]).groupby("ticker").head(1)
+        st.dataframe(
+            latest[["ticker", "period", "monthly_return_pct", "finbert_label", "finbert_score", "vader_compound", "forward_21d_return_pct"]],
+            width="stretch",
+        )
+
+with tabs[4]:
+    ticker = st.selectbox("Ticker", monthly.columns.tolist(), index=0)
+    st.dataframe(calendar_return_table(monthly[ticker]).sort_index(ascending=True).style.format("{:.1f}"), width="stretch")

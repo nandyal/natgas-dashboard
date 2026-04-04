@@ -11,6 +11,19 @@ services:
       - .:/app
     command: streamlit run app.py
 
+  natgas-market-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.market
+    container_name: natgas-market-dashboard
+    ports:
+      - "8502:8502"
+    environment:
+      FINBERT_API_KEY: ${FINBERT_API_KEY:-}
+    volumes:
+      - .:/app
+    command: streamlit run market_app.py --server.port=8502
+
   natgas-refresh:
     build:
       context: .

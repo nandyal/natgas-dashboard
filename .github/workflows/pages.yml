@@ -33,10 +33,15 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-sentiment.txt
 
-      - name: Generate static report
-        run: python generate_static_report.py
+      - name: Generate reports
+        run: |
+          python market_sentiment_analysis.py
+          python generate_static_report.py
+          python generate_market_report.py
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

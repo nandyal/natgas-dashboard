@@ -6,8 +6,10 @@ This project now includes a Python dashboard that recreates the main natural gas
 
 - `refresh_eia_ng_inventory.py`: refreshes the EIA weekly Lower 48 storage series and rewrites the local CSV/JSON files
 - `dashboard_data.py`: reusable inventory and market data helpers
-- `app.py`: Streamlit dashboard
+- `app.py`: Streamlit inventory dashboard
+- `market_app.py`: separate Streamlit market dashboard
 - `generate_static_report.py`: builds a static GitHub Pages report into `docs/index.html`
+- `generate_market_report.py`: builds a separate static market report into `docs/market.html`
 - `eia_ng_total_inventory_last_10_years.csv`: local EIA weekly inventory history
 
 ## Setup
@@ -27,6 +29,12 @@ python refresh_eia_ng_inventory.py
 
 ```powershell
 streamlit run app.py
+```
+
+## Run the market dashboard
+
+```powershell
+streamlit run market_app.py
 ```
 
 ## Build the GitHub Pages report locally
@@ -57,6 +65,20 @@ FINBERT_API_KEY=your_rotated_finbert_api_key
 
 The sentiment script reads `FINBERT_API_KEY` locally and does not require that key to be committed or pushed to GitHub.
 
+## Build market sentiment analysis
+
+```powershell
+python -m pip install -r requirements-sentiment.txt
+python market_sentiment_analysis.py
+python generate_market_report.py
+```
+
+This creates:
+
+- `market_sentiment_events.csv`
+- `market_sentiment_events.json`
+- `docs/market.html`
+
 ## Docker
 
 Build and run the dashboard:
@@ -68,6 +90,14 @@ docker compose up --build natgas-dashboard
 ```
 
 Then open `http://localhost:8501`.
+
+Run the separate market dashboard:
+
+```powershell
+docker compose up --build natgas-market-dashboard
+```
+
+Then open `http://localhost:8502`.
 
 Refresh the EIA inventory files inside Docker:
 
@@ -87,6 +117,7 @@ The compose setup mounts this project folder into the container, so refreshed CS
 - GitHub Actions in this repo do not use the EIA API key. If you later automate refreshes in GitHub, store the key as a GitHub Actions secret and never commit it to the repository.
 - The GitHub Pages workflow only builds the static report from files already in the repository. It does not use your EIA API key.
 - The GitHub Pages workflow refreshes Yahoo Finance market data every 6 hours and republishes the static report automatically.
+- The GitHub Pages workflow now also rebuilds the separate market report and market sentiment outputs.
 
 ## Current dashboard coverage
 
@@ -95,7 +126,7 @@ The compose setup mounts this project folder into the container, so refreshed CS
 - Seasonal naive inventory forecast
 - Inventory decomposition
 - Static GitHub Pages report in `docs/index.html`
-- Natural gas and related equities/ETF market tracking from Yahoo Finance
-- Equal-weight natural gas equity portfolio view
-- Correlation heatmap
-- Monthly return table by ticker
+- Separate market dashboard and GitHub Pages report for stocks, ETFs, and NG futures
+- Optimized market portfolio view
+- Stock, ETF, and futures sentiment with one-month forward price reaction
+- Calendar monthly returns for all tracked stocks, ETFs, and futures

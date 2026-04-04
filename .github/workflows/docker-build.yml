@@ -27,3 +27,11 @@ jobs:
           file: ./Dockerfile
           push: false
           tags: natgas-dashboard:ci
+
+      - name: Build market dashboard image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.market
+          push: false
+          tags: natgas-market-dashboard:ci

@@ -9,18 +9,9 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from dashboard_data import (
-    PORTFOLIO_TICKERS,
-    DEFAULT_TICKERS,
-    available_tickers,
-    build_optimized_portfolio,
-    calendar_return_table,
-    correlation_matrix,
-    fetch_market_prices,
     inventory_decomposition,
     latest_inventory_vs_history,
     load_inventory_data,
-    monthly_returns,
-    normalized_prices,
     seasonal_inventory_profile,
     split_residual_components,
     summarize_inventory,
@@ -38,13 +29,8 @@ def get_inventory_data() -> pd.DataFrame:
     return load_inventory_data(BASE_DIR)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_market_data(start_date: str) -> pd.DataFrame:
-    return fetch_market_prices(start=start_date)
-
-
-st.title("Natural Gas Market Dashboard")
-st.caption("Inventory data: U.S. EIA weekly storage series. Market data: Yahoo Finance.")
+st.title("Natural Gas Inventory Dashboard")
+st.caption("Inventory data: U.S. EIA weekly storage series.")
 
 inventory = get_inventory_data()
 summary = summarize_inventory(inventory)
@@ -208,84 +194,7 @@ with right:
     )
     st.plotly_chart(decomp_chart, width="stretch")
 
-st.divider()
-st.subheader("Market and Portfolio")
-
-market_start = st.sidebar.date_input("Market data start", value=pd.Timestamp("2019-01-01"))
-market = get_market_data(pd.Timestamp(market_start).strftime("%Y-%m-%d"))
-available_market, missing_market = available_tickers(market, DEFAULT_TICKERS)
-available_portfolio, missing_portfolio = available_tickers(market, PORTFOLIO_TICKERS)
-norm = normalized_prices(market)
-monthly = monthly_returns(market)
-portfolio = build_optimized_portfolio(market, PORTFOLIO_TICKERS)
-correlation = correlation_matrix(market[available_market].dropna())
-
-if missing_market:
-    st.info(f"Yahoo Finance did not return current data for: {', '.join(missing_market)}")
-
-market_tabs = st.tabs(["Normalized Prices", "Correlation", "Portfolio", "Monthly Returns"])
-
-with market_tabs[0]:
-    normalized_chart = px.line(
-        norm.reset_index(),
-        x="Date",
-        y=norm.columns,
-        labels={"value": "Indexed to 100", "variable": "Ticker"},
-        title="Normalized market prices",
-    )
-    normalized_chart.update_layout(height=480, margin=dict(l=20, r=20, t=50, b=20))
-    st.plotly_chart(normalized_chart, width="stretch")
-
-with market_tabs[1]:
-    heatmap = px.imshow(
-        correlation.round(2),
-        text_auto=True,
-        color_continuous_scale="RdBu",
-        origin="lower",
-        aspect="auto",
-        title="Daily return correlation matrix",
-    )
-    heatmap.update_layout(height=520, margin=dict(l=20, r=20, t=50, b=20))
-    st.plotly_chart(heatmap, width="stretch")
-
-with market_tabs[2]:
-    port_chart = go.Figure()
-    port_chart.add_trace(
-        go.Scatter(
-            x=portfolio.index.index,
-            y=portfolio.index.values,
-            mode="lines",
-            name="Optimized portfolio",
-            line=dict(color="#0d6e6e", width=3),
-        )
-    )
-    port_chart.update_layout(
-        title="Optimized portfolio performance",
-        height=420,
-        margin=dict(l=20, r=20, t=50, b=20),
-        yaxis_title="Indexed to 100",
-    )
-    st.plotly_chart(port_chart, width="stretch")
-
-    rolling_vol = portfolio.returns.rolling(63).std() * (252 ** 0.5)
-    st.line_chart(rolling_vol.rename("63-day rolling volatility"))
-    st.dataframe(
-        portfolio.weights.rename("weight").mul(100).round(1).to_frame(),
-        width="stretch",
-    )
-    st.caption(
-        f"Optimized portfolio metrics: annualized return {portfolio.annual_return * 100:.1f}%, "
-        f"annualized volatility {portfolio.annual_volatility * 100:.1f}%, "
-        f"Sharpe ratio {portfolio.sharpe_ratio:.2f}."
-    )
-    if missing_portfolio:
-        st.caption(f"Portfolio currently excludes unavailable tickers: {', '.join(missing_portfolio)}")
-
-with market_tabs[3]:
-    ticker = st.selectbox("Monthly return table", market.columns.tolist(), index=0)
-    table = calendar_return_table(monthly[ticker])
-    st.dataframe(table.style.format("{:.1f}"), width="stretch")
-
 st.sidebar.header("Run Notes")
 st.sidebar.write("1. Refresh inventory data with `python refresh_eia_ng_inventory.py`.")
 st.sidebar.write("2. Launch the dashboard with `streamlit run app.py`.")
+st.sidebar.write("3. Launch the separate market dashboard with `streamlit run market_app.py`.")

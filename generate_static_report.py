@@ -68,6 +68,15 @@ def summary_cards_html(summary, release: dict) -> str:
     """
 
 
+def nav_html() -> str:
+    return """
+    <nav class="nav">
+      <a href="./index.html" class="active">Inventory Analysis</a>
+      <a href="./market.html">Market Analysis</a>
+    </nav>
+    """
+
+
 def inventory_history_chart(df: pd.DataFrame) -> str:
     fig = go.Figure()
     fig.add_trace(
@@ -602,6 +611,19 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, senti
       grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
       gap: 14px;
     }}
+    .nav {{
+      display: flex;
+      gap: 14px;
+      margin-bottom: 18px;
+    }}
+    .nav a {{
+      color: #0f766e;
+      text-decoration: none;
+      font-weight: 600;
+    }}
+    .nav a.active {{
+      color: #15231f;
+    }}
     .card, .panel {{
       background: var(--panel);
       border: 1px solid var(--border);
@@ -683,6 +705,7 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, senti
 </head>
 <body>
   <main class="wrap">
+    {nav_html()}
     <h1>EIA Natural Gas Weekly Inventory Analysis</h1>
     <p class="lede">
       This page gives a quick, readable summary of the latest official U.S. Energy Information Administration weekly natural gas release. It highlights what changed this week, how current storage compares with history, and the cleaned tables behind the charts.
@@ -724,25 +747,9 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, senti
     {sentiment_section_html(sentiment_df, market_close)}
 
     <section class="panel">
-      <h2>Market and portfolio</h2>
-      <p>In this section, selected US Natural gas based company stocks, Natural Gas Fund ETF, US Oil Fund ETF normalized prices, correlation of their returns, returns of an optimized equity and ETF portfolio and monthly returns tables are analysed. The Source for stocks and ETF data is Yahoo Finance.</p>
-      {normalized_prices_chart(market_close)}
-    </section>
-
-    <section class="two-up">
-      <div class="panel">
-        {correlation_chart(market_close)}
-      </div>
-      <div class="panel">
-        {portfolio_chart(market_close)}
-        {portfolio_summary_html(market_close)}
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>Monthly returns</h2>
-      <p>Recent calendar-style monthly return tables for the tracked natural gas contract, equities, and ETFs.</p>
-      {monthly_returns_table(market_close)}
+      <h2>Market analysis</h2>
+      <p>The stock, ETF, natural gas futures, portfolio, and market-sentiment sections now live on a separate dedicated page.</p>
+      <p><a href="./market.html">Open the Natural Gas Market and Portfolio Analysis page</a></p>
     </section>
   </main>
 </body>
