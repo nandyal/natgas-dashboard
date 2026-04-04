@@ -145,23 +145,11 @@ def correlation_matrix(close: pd.DataFrame) -> pd.DataFrame:
     return daily_returns(close).corr()
 
 
-def relative_strength_index(close: pd.DataFrame, window: int = 14) -> pd.DataFrame:
-    delta = close.diff()
-    gains = delta.clip(lower=0.0)
-    losses = -delta.clip(upper=0.0)
-    avg_gain = gains.ewm(alpha=1 / window, min_periods=window, adjust=False).mean()
-    avg_loss = losses.ewm(alpha=1 / window, min_periods=window, adjust=False).mean()
-    rs = avg_gain.divide(avg_loss.replace(0.0, np.nan))
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.fillna(50.0)
-
-
 def _optimize_portfolio_weights(
     returns: pd.DataFrame,
-    method: str = "min_volatility",
+    method: str = "sharpe",
     risk_free_rate: float = 0.02,
     max_long_weight: float = 0.55,
-    max_short_weight: float = 0.25,
 ) -> pd.Series:
     available = list(returns.columns)
     if len(returns) < 20:
@@ -169,16 +157,15 @@ def _optimize_portfolio_weights(
 
     n_assets = len(available)
     signal = returns.mean()
-    start = signal - signal.mean()
-    if np.allclose(start.abs().sum(), 0.0):
+    start = signal.clip(lower=0.0)
+    if np.allclose(start.sum(), 0.0):
         start = pd.Series(1 / n_assets, index=available)
     else:
-        start = start / start.abs().sum()
-        start = start.clip(lower=-max_short_weight, upper=max_long_weight)
-        start = start - (start.sum() - 1.0) / n_assets
-        start = start.clip(lower=-max_short_weight, upper=max_long_weight)
+        start = start / start.sum()
+        start = start.clip(lower=0.0, upper=max_long_weight)
+        start = start / start.sum()
     start = start.to_numpy(dtype=float)
-    bounds = [(-min(max_short_weight, 1.0), min(max_long_weight, 1.0))] * n_assets
+    bounds = [(0.0, min(max_long_weight, 1.0))] * n_assets
     constraints = [{"type": "eq", "fun": lambda w: sum(w) - 1}]
 
     annualized_returns = returns.mean() * 252
@@ -186,12 +173,6 @@ def _optimize_portfolio_weights(
 
     def objective(weights: list[float]) -> float:
         weights_series = pd.Series(weights, index=available)
-        if method == "kelly":
-            portfolio_returns = returns.mul(weights_series, axis=1).sum(axis=1)
-            if (portfolio_returns <= -0.999999).any():
-                return 1e9
-            return -float(np.log1p(portfolio_returns).mean())
-
         portfolio_volatility = float(np.sqrt(weights_series.T @ annualized_cov @ weights_series))
         if portfolio_volatility <= 0:
             return 1e9
@@ -213,54 +194,13 @@ def _optimize_portfolio_weights(
     return pd.Series(start, index=available)
 
 
-def _apply_position_rules(
-    period_returns: pd.DataFrame,
-    period_rsi: pd.DataFrame,
-    weights: pd.Series,
-    monthly_short_stop: float = 0.10,
-    resume_long_rsi: float = 20.0,
-    exit_long_rsi: float = 80.0,
-) -> pd.Series:
-    simulated_returns: list[float] = []
-    simulated_index: list[pd.Timestamp] = []
-
-    for _, month_slice in period_returns.groupby(period_returns.index.to_period("M")):
-        active_weights = weights.copy()
-        short_exited = pd.Series(False, index=weights.index)
-        month_cumulative = pd.Series(1.0, index=weights.index)
-
-        for date, row in month_slice.iterrows():
-            portfolio_return = float(row.fillna(0.0).mul(active_weights, fill_value=0.0).sum())
-            simulated_returns.append(portfolio_return)
-            simulated_index.append(date)
-
-            month_cumulative = month_cumulative.mul(1.0 + row.fillna(0.0), fill_value=1.0)
-            daily_rsi = period_rsi.loc[date].reindex(weights.index).fillna(50.0)
-            short_breach = (weights < 0) & (~short_exited) & ((month_cumulative - 1.0) >= monthly_short_stop)
-            if short_breach.any():
-                active_weights.loc[short_breach] = 0.0
-                short_exited.loc[short_breach] = True
-
-            resume_long = short_exited & (daily_rsi <= resume_long_rsi)
-            if resume_long.any():
-                active_weights.loc[resume_long] = weights.loc[resume_long].abs()
-
-            sell_long = (active_weights > 0) & (daily_rsi >= exit_long_rsi)
-            if sell_long.any():
-                active_weights.loc[sell_long] = 0.0
-
-    return pd.Series(simulated_returns, index=pd.DatetimeIndex(simulated_index)).sort_index()
-
-
 def build_optimized_portfolio(
     close: pd.DataFrame,
     tickers: list[str] | None = None,
-    method: str = "min_volatility",
+    method: str = "sharpe",
     risk_free_rate: float = 0.02,
     max_long_weight: float = 0.55,
-    max_short_weight: float = 0.25,
     rebalance_years: int = 1,
-    monthly_short_stop: float = 0.10,
 ) -> PortfolioSummary:
     tickers = tickers or PORTFOLIO_TICKERS
     available = [ticker for ticker in tickers if ticker in close.columns]
@@ -268,7 +208,6 @@ def build_optimized_portfolio(
         raise ValueError("None of the requested portfolio tickers are available.")
 
     portfolio_close = close[available].dropna().copy()
-    rsi = relative_strength_index(portfolio_close)
     returns = portfolio_close.pct_change().dropna()
     if returns.empty:
         raise ValueError("Not enough price history to build portfolio returns.")
@@ -295,7 +234,6 @@ def build_optimized_portfolio(
             method=method,
             risk_free_rate=risk_free_rate,
             max_long_weight=max_long_weight,
-            max_short_weight=max_short_weight,
         )
         latest_weights = weights
         rebalance_history.append(weights.rename(rebalance_date))
@@ -307,14 +245,7 @@ def build_optimized_portfolio(
             mask = returns.index >= rebalance_date
         period_slice = returns.loc[mask]
         if not period_slice.empty:
-            period_returns.append(
-                _apply_position_rules(
-                    period_slice,
-                    rsi.loc[period_slice.index],
-                    weights,
-                    monthly_short_stop=monthly_short_stop,
-                )
-            )
+            period_returns.append(period_slice.mul(weights, axis=1).sum(axis=1))
 
     portfolio_returns = pd.concat(period_returns).sort_index()
     cumulative = (1 + portfolio_returns).cumprod() * 100
@@ -334,30 +265,6 @@ def build_optimized_portfolio(
         annual_volatility=annual_volatility,
         sharpe_ratio=sharpe_ratio,
     )
-
-
-def compare_portfolio_methods(
-    close: pd.DataFrame,
-    tickers: list[str] | None = None,
-    risk_free_rate: float = 0.02,
-    max_long_weight: float = 0.55,
-    max_short_weight: float = 0.25,
-    rebalance_years: int = 1,
-    monthly_short_stop: float = 0.10,
-) -> dict[str, PortfolioSummary]:
-    results: dict[str, PortfolioSummary] = {}
-    for method in ["kelly", "sharpe", "min_volatility"]:
-        results[method] = build_optimized_portfolio(
-            close=close,
-            tickers=tickers,
-            method=method,
-            risk_free_rate=risk_free_rate,
-            max_long_weight=max_long_weight,
-            max_short_weight=max_short_weight,
-            rebalance_years=rebalance_years,
-            monthly_short_stop=monthly_short_stop,
-        )
-    return results
 
 
 def available_tickers(close: pd.DataFrame, requested: list[str]) -> tuple[list[str], list[str]]:

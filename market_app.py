@@ -57,7 +57,7 @@ recent_sentiment = get_recent_market_sentiment()
 norm = normalized_prices(market)
 monthly = monthly_returns(market)
 correlation = correlation_matrix(market)
-portfolio = build_optimized_portfolio(market, PORTFOLIO_TICKERS, method="min_volatility")
+portfolio = build_optimized_portfolio(market, PORTFOLIO_TICKERS, method="sharpe")
 
 tabs = st.tabs(["Normalized Prices", "Correlation", "Portfolio", "Sentiment", "Monthly Returns"])
 
@@ -73,17 +73,15 @@ with tabs[1]:
 
 with tabs[2]:
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=portfolio.index.index, y=portfolio.index.values, mode="lines", line=dict(width=3, color="#0d6e6e"), name="Long-short minimum-volatility portfolio"))
-    fig.update_layout(title="Long-short minimum-volatility portfolio performance", height=460, margin=dict(l=20, r=20, t=50, b=20), yaxis_title="Indexed to 100")
+    fig.add_trace(go.Scatter(x=portfolio.index.index, y=portfolio.index.values, mode="lines", line=dict(width=3, color="#0d6e6e"), name="Long-only Sharpe-maximizing portfolio"))
+    fig.update_layout(title="Long-only Sharpe-maximizing portfolio performance", height=460, margin=dict(l=20, r=20, t=50, b=20), yaxis_title="Indexed to 100")
     st.plotly_chart(fig, width="stretch")
     st.dataframe(portfolio.weights.rename("weight").mul(100).round(1).to_frame(), width="stretch")
     rebalance_table = portfolio.rebalance_weights.mul(100).round(1).copy()
     rebalance_table.index = rebalance_table.index.strftime("%Y-%m-%d")
     st.dataframe(rebalance_table, width="stretch")
     st.caption(
-        f"Portfolio uses a bounded long-short minimum-volatility allocation with the same annual rebalance, monthly short-stop, and RSI overlay. "
-        f"The objective is to reduce realized portfolio volatility rather than maximize growth or Sharpe ratio. "
-        f"Annualized log growth {portfolio.kelly_growth_rate * 100:.1f}%, "
+        f"Portfolio uses a simple long-only Sharpe-maximizing allocation, re-estimated annually from trailing daily returns. "
         f"annualized return {portfolio.annual_return * 100:.1f}%, "
         f"annualized volatility {portfolio.annual_volatility * 100:.1f}%, "
         f"Sharpe ratio {portfolio.sharpe_ratio:.2f}."
