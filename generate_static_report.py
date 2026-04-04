@@ -369,6 +369,7 @@ def sentiment_section_html(sentiment_df: pd.DataFrame) -> str:
         </section>
         """
 
+    chart = sentiment_chart(sentiment_df)
     recent = sentiment_df.sort_values("period", ascending=False).head(8).copy()
     rows = "".join(
         "<tr>"
@@ -389,6 +390,7 @@ def sentiment_section_html(sentiment_df: pd.DataFrame) -> str:
       <h2>Inventory shock sentiment</h2>
       <p>This section scores unusually large weekly inventory builds and drawdowns using FinBERT and VADER on structured event summaries. It is intended as a sentiment layer over inventory shocks rather than a substitute for market fundamentals.</p>
       <p class="small">Important: the NLP labels reflect text tone, not necessarily gas-price direction. For example, FinBERT can classify a large inventory drawdown as textually negative even when the inventory shock is bullish for natural gas prices.</p>
+      {chart}
       <p class="small"><strong>Average VADER compound:</strong> {vader_mean:.2f}. <strong>Most common FinBERT label:</strong> {top_finbert}.</p>
       <table>
         <thead>
@@ -405,6 +407,60 @@ def sentiment_section_html(sentiment_df: pd.DataFrame) -> str:
       </table>
     </section>
     """
+
+
+def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
+    df = sentiment_df.sort_values("period").copy()
+    finbert_numeric = df["finbert_label"].map({"negative": -1, "neutral": 0, "positive": 1}).fillna(0)
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Bar(
+            x=df["period"],
+            y=df["weekly_change_bcf"],
+            name="Weekly inventory change (Bcf)",
+            marker_color=["#b91c1c" if x < 0 else "#2563eb" for x in df["weekly_change_bcf"]],
+            opacity=0.55,
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df["period"],
+            y=df["vader_compound"],
+            name="VADER compound",
+            mode="lines+markers",
+            line=dict(color="#0f766e", width=3),
+            marker=dict(size=6),
+        ),
+        secondary_y=True,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df["period"],
+            y=finbert_numeric,
+            name="FinBERT sentiment",
+            mode="lines+markers",
+            line=dict(color="#7c3aed", width=2, dash="dot"),
+            marker=dict(size=6),
+        ),
+        secondary_y=True,
+    )
+    fig.update_layout(
+        title="Inventory shock size versus sentiment over time",
+        template="plotly_white",
+        height=460,
+        margin=dict(l=20, r=20, t=60, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    fig.update_yaxes(title_text="Weekly change (Bcf)", secondary_y=False)
+    fig.update_yaxes(
+        title_text="Sentiment score",
+        secondary_y=True,
+        range=[-1.1, 1.1],
+        tickvals=[-1, -0.5, 0, 0.5, 1],
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
 
 
 def lower48_table(df: pd.DataFrame) -> str:
