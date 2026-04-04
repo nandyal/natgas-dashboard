@@ -37,6 +37,18 @@ python generate_static_report.py
 
 This writes the static report to `docs/index.html`.
 
+## Build inventory shock sentiment analysis
+
+```powershell
+python -m pip install -r requirements-sentiment.txt
+python inventory_sentiment_analysis.py
+```
+
+This creates precomputed FinBERT and VADER sentiment files for unusual inventory builds and drawdowns:
+
+- `inventory_sentiment_events.csv`
+- `inventory_sentiment_events.json`
+
 ## Docker
 
 Build and run the dashboard:

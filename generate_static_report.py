@@ -31,10 +31,18 @@ DOCS_DIR = BASE_DIR / "docs"
 REPORT_PATH = DOCS_DIR / "index.html"
 LATEST_JSON = BASE_DIR / "weekly_natural_gas_inventory_2026-03-20.json"
 MONTHLY_RETURN_TICKERS = ["NG=F", "UNG", "USO"]
+SENTIMENT_CSV = BASE_DIR / "inventory_sentiment_events.csv"
 
 
 def latest_release_payload() -> dict:
     return json.loads(LATEST_JSON.read_text(encoding="utf-8-sig"))
+
+
+def load_sentiment_events() -> pd.DataFrame:
+    if not SENTIMENT_CSV.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(SENTIMENT_CSV, parse_dates=["period"])
+    return df
 
 
 def summary_cards_html(summary, release: dict) -> str:
@@ -352,6 +360,53 @@ def monthly_returns_table(close: pd.DataFrame) -> str:
     return '<div class="mini-grid">' + "".join(tables) + "</div>"
 
 
+def sentiment_section_html(sentiment_df: pd.DataFrame) -> str:
+    if sentiment_df.empty:
+        return """
+        <section class="panel">
+          <h2>Inventory shock sentiment</h2>
+          <p>FinBERT and VADER sentiment has not been generated yet for unusual inventory shocks.</p>
+        </section>
+        """
+
+    recent = sentiment_df.sort_values("period", ascending=False).head(8).copy()
+    rows = "".join(
+        "<tr>"
+        f"<td>{row.period.strftime('%Y-%m-%d')}</td>"
+        f"<td>{row.weekly_change_bcf:+.0f} Bcf</td>"
+        f"<td>{row.abs_zscore:.2f}</td>"
+        f"<td>{row.inventory_signal}</td>"
+        f"<td>{row.finbert_label} ({row.finbert_score:.2f})</td>"
+        f"<td>{row.vader_compound:.2f}</td>"
+        "</tr>"
+        for row in recent.itertuples()
+    )
+    vader_mean = sentiment_df["vader_compound"].mean()
+    finbert_counts = sentiment_df["finbert_label"].value_counts()
+    top_finbert = finbert_counts.index[0] if not finbert_counts.empty else "n/a"
+    return f"""
+    <section class="panel">
+      <h2>Inventory shock sentiment</h2>
+      <p>This section scores unusually large weekly inventory builds and drawdowns using FinBERT and VADER on structured event summaries. It is intended as a sentiment layer over inventory shocks rather than a substitute for market fundamentals.</p>
+      <p class="small">Important: the NLP labels reflect text tone, not necessarily gas-price direction. For example, FinBERT can classify a large inventory drawdown as textually negative even when the inventory shock is bullish for natural gas prices.</p>
+      <p class="small"><strong>Average VADER compound:</strong> {vader_mean:.2f}. <strong>Most common FinBERT label:</strong> {top_finbert}.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Week ending</th>
+            <th>Weekly change</th>
+            <th>Shock z-score</th>
+            <th>Inventory signal</th>
+            <th>FinBERT</th>
+            <th>VADER</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+
+
 def lower48_table(df: pd.DataFrame) -> str:
     latest = df.iloc[-1]
     prev = df.iloc[-2]
@@ -424,7 +479,7 @@ def regional_table(release: dict) -> str:
     """
 
 
-def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> str:
+def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, sentiment_df: pd.DataFrame) -> str:
     summary = summarize_inventory(df)
     refreshed = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return f"""<!doctype html>
@@ -590,6 +645,8 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame) -> st
       {regional_table(release)}
     </section>
 
+    {sentiment_section_html(sentiment_df)}
+
     <section class="panel">
       <h2>Market and portfolio</h2>
       <p>In this section, selected US Natural gas based company stocks, Natural Gas Fund ETF, US Oil Fund ETF normalized prices, correlation of their returns, returns of an optimized equity and ETF portfolio and monthly returns tables are analysed. The Source for stocks and ETF data is Yahoo Finance.</p>
@@ -623,7 +680,8 @@ def main() -> int:
     release = latest_release_payload()
     market_tickers = list(dict.fromkeys(DEFAULT_TICKERS + MONTHLY_RETURN_TICKERS))
     market_close = fetch_market_prices(market_tickers, start="2019-01-01")
-    REPORT_PATH.write_text(html_page(df, release, market_close), encoding="utf-8")
+    sentiment_df = load_sentiment_events()
+    REPORT_PATH.write_text(html_page(df, release, market_close, sentiment_df), encoding="utf-8")
     print(f"Wrote {REPORT_PATH}")
     return 0
 
