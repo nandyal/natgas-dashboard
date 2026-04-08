@@ -2,26 +2,13 @@
   "source": "EIA API v2",
   "series_id": "NG.NW2_EPG0_SWO_R48_BCF.W",
   "series_code": "NW2_EPG0_SWO_R48_BCF",
-  "retrieved_at": "2026-04-01T09:56:25",
+  "retrieved_at": "2026-04-08T11:31:00",
   "years_requested": 10,
-  "start_period": "2016-04-01",
-  "end_period": "2026-03-20",
+  "start_period": "2016-04-08",
+  "end_period": "2026-03-27",
   "row_count": 521,
   "units": "BCF",
   "data": [
-    {
-      "period": "2016-04-01",
-      "duoarea": "R48",
-      "area-name": "NA",
-      "product": "EPG0",
-      "product-name": "Natural Gas",
-      "process": "SWO",
-      "process-name": "Underground Storage - Working Gas",
-      "series": "NW2_EPG0_SWO_R48_BCF",
-      "series-description": "Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)",
-      "value": 2480,
-      "units": "BCF"
-    },
     {
       "period": "2016-04-08",
       "duoarea": "R48",
@@ -6780,6 +6767,19 @@
       "series": "NW2_EPG0_SWO_R48_BCF",
       "series-description": "Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)",
       "value": 1829,
+      "units": "BCF"
+    },
+    {
+      "period": "2026-03-27",
+      "duoarea": "R48",
+      "area-name": "NA",
+      "product": "EPG0",
+      "product-name": "Natural Gas",
+      "process": "SWO",
+      "process-name": "Underground Storage - Working Gas",
+      "series": "NW2_EPG0_SWO_R48_BCF",
+      "series-description": "Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)",
+      "value": 1865,
       "units": "BCF"
     }
   ]
