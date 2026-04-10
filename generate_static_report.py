@@ -29,13 +29,24 @@ from dashboard_data import (
 BASE_DIR = Path(__file__).resolve().parent
 DOCS_DIR = BASE_DIR / "docs"
 REPORT_PATH = DOCS_DIR / "index.html"
-LATEST_JSON = BASE_DIR / "weekly_natural_gas_inventory_2026-03-20.json"
+LEGACY_RELEASE_JSON = BASE_DIR / "weekly_natural_gas_inventory_2026-03-20.json"
 MONTHLY_RETURN_TICKERS = ["NG=F", "UNG", "USO"]
 SENTIMENT_CSV = BASE_DIR / "inventory_sentiment_events.csv"
 
 
-def latest_release_payload() -> dict:
-    return json.loads(LATEST_JSON.read_text(encoding="utf-8-sig"))
+def latest_release_payload(df: pd.DataFrame) -> dict:
+    latest_period = pd.Timestamp(df["period"].max()).normalize()
+    payload = {
+        "release_name": "Weekly Natural Gas Storage Report",
+        "current_week": latest_period.strftime("%Y-%m-%d"),
+        "release_date": (latest_period + pd.Timedelta(days=6)).strftime("%Y-%m-%d"),
+        "series": [],
+    }
+    if LEGACY_RELEASE_JSON.exists():
+        legacy = json.loads(LEGACY_RELEASE_JSON.read_text(encoding="utf-8-sig"))
+        if str(legacy.get("current_week")) == payload["current_week"]:
+            payload = legacy
+    return payload
 
 
 def load_sentiment_events() -> pd.DataFrame:
@@ -520,6 +531,12 @@ def lower48_table(df: pd.DataFrame) -> str:
 
 
 def regional_table(release: dict) -> str:
+    if not release.get("series"):
+        return """
+        <div class="table-wrap">
+          <p class="small">Regional storage detail is not available in the current cached payload yet. The page-level dates and Lower 48 totals above are updated through the latest EIA release.</p>
+        </div>
+        """
     rows = []
     for series in release["series"]:
         if series["name"] == "total lower 48 states":
@@ -760,7 +777,7 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, senti
 def main() -> int:
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     df = load_inventory_data(BASE_DIR)
-    release = latest_release_payload()
+    release = latest_release_payload(df)
     market_tickers = list(dict.fromkeys(DEFAULT_TICKERS + MONTHLY_RETURN_TICKERS))
     market_close = fetch_market_prices(market_tickers, start="2019-01-01")
     sentiment_df = load_sentiment_events()
