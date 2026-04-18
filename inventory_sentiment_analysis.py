@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from dashboard_data import load_inventory_data
+from dashboard_data import gpd_tail_var_thresholds, load_inventory_data
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -29,6 +29,7 @@ def load_local_env() -> None:
 def build_event_text(row: pd.Series) -> str:
     direction = "drawdown" if row["weekly_change_bcf"] < 0 else "build"
     surprise = "unusually large" if row["abs_zscore"] >= 2 else "notable"
+    tail_note = " This crossed the GPD Value-at-Risk tail threshold." if row.get("is_extreme_tail_event", False) else ""
     relative_year = "above" if row["vs_year_ago_bcf"] >= 0 else "below"
     relative_avg = "above" if row["vs_52w_avg_bcf"] >= 0 else "below"
     return (
@@ -36,7 +37,7 @@ def build_event_text(row: pd.Series) -> str:
         f"{surprise} {direction} of {abs(row['weekly_change_bcf']):.0f} Bcf, leaving inventories at "
         f"{row['value_bcf']:.0f} Bcf. Storage stood {abs(row['vs_year_ago_bcf']):.0f} Bcf {relative_year} "
         f"the level a year earlier and {abs(row['vs_52w_avg_bcf']):.0f} Bcf {relative_avg} the rolling 52-week average. "
-        f"This suggests {'tighter' if row['weekly_change_bcf'] < 0 else 'looser'} near-term supply conditions in the natural gas market."
+        f"This suggests {'tighter' if row['weekly_change_bcf'] < 0 else 'looser'} near-term supply conditions in the natural gas market.{tail_note}"
     )
 
 
@@ -79,6 +80,15 @@ def main() -> int:
     df["change_std_52w"] = df["weekly_change_bcf"].rolling(52).std()
     df["zscore"] = (df["weekly_change_bcf"] - df["change_mean_52w"]) / df["change_std_52w"]
     df["abs_zscore"] = df["zscore"].abs()
+    evt = gpd_tail_var_thresholds(df["weekly_change_bcf"])
+    df["evt_upper_var_bcf"] = evt["upper_var_bcf"]
+    df["evt_lower_var_bcf"] = evt["lower_var_bcf"]
+    df["evt_upper_tail_threshold_bcf"] = evt["upper_tail_threshold_bcf"]
+    df["evt_lower_tail_threshold_bcf"] = evt["lower_tail_threshold_bcf"]
+    df["is_extreme_tail_event"] = (
+        (df["weekly_change_bcf"] >= evt["upper_var_bcf"])
+        | (df["weekly_change_bcf"] <= evt["lower_var_bcf"])
+    )
 
     events = df[
         df["weekly_change_bcf"].notna()
@@ -109,6 +119,11 @@ def main() -> int:
         "vs_52w_avg_bcf",
         "zscore",
         "abs_zscore",
+        "evt_upper_var_bcf",
+        "evt_lower_var_bcf",
+        "evt_upper_tail_threshold_bcf",
+        "evt_lower_tail_threshold_bcf",
+        "is_extreme_tail_event",
         "inventory_signal",
         "vader_compound",
         "vader_pos",

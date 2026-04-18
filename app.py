@@ -12,6 +12,9 @@ from dashboard_data import (
     inventory_decomposition,
     latest_inventory_vs_history,
     load_inventory_data,
+    residual_acf_pacf_table,
+    residual_regime_alert,
+    rolling_residual_autocorrelation,
     seasonal_inventory_profile,
     split_residual_components,
     summarize_inventory,
@@ -193,6 +196,88 @@ with right:
         margin=dict(l=20, r=20, t=70, b=20),
     )
     st.plotly_chart(decomp_chart, width="stretch")
+
+    diagnostic_tabs = st.tabs(["Stationarity", "Noise ACF/PACF", "Regime Monitor"])
+    with diagnostic_tabs[0]:
+        adf_rows = [
+            inventory.attrs.get("adf_inventory_level", {}),
+            inventory.attrs.get("adf_weekly_change", {}),
+        ]
+        adf_table = pd.DataFrame([row for row in adf_rows if row])
+        if not adf_table.empty:
+            st.dataframe(
+                adf_table[
+                    [
+                        "label",
+                        "adf_statistic",
+                        "p_value",
+                        "used_lags",
+                        "nobs",
+                        "interpretation",
+                    ]
+                ],
+                width="stretch",
+            )
+    with diagnostic_tabs[1]:
+        corr = residual_acf_pacf_table(noise_residual, nlags=26)
+        confidence = float(corr["confidence"].iloc[0]) if not corr.empty else 0.0
+        corr_chart = make_subplots(
+            rows=1,
+            cols=2,
+            subplot_titles=("Noise ACF", "Noise PACF"),
+            shared_yaxes=True,
+        )
+        corr_chart.add_trace(
+            go.Bar(x=corr["lag"], y=corr["acf"], marker_color="#0d6e6e", name="ACF"),
+            row=1,
+            col=1,
+        )
+        corr_chart.add_trace(
+            go.Bar(x=corr["lag"], y=corr["pacf"], marker_color="#1d4ed8", name="PACF"),
+            row=1,
+            col=2,
+        )
+        for col in [1, 2]:
+            corr_chart.add_hline(y=confidence, line_dash="dash", line_color="#991b1b", row=1, col=col)
+            corr_chart.add_hline(y=-confidence, line_dash="dash", line_color="#991b1b", row=1, col=col)
+        corr_chart.update_layout(
+            title="Noise residual ACF/PACF diagnostic",
+            height=380,
+            margin=dict(l=20, r=20, t=60, b=20),
+            showlegend=False,
+        )
+        corr_chart.update_xaxes(title_text="Lag")
+        corr_chart.update_yaxes(title_text="Correlation")
+        st.plotly_chart(corr_chart, width="stretch")
+    with diagnostic_tabs[2]:
+        rolling = rolling_residual_autocorrelation(noise_residual, window=13, lag=1)
+        alert = residual_regime_alert(noise_residual, window=13, lag=1)
+        state = "Alert" if alert["alert"] else "Normal"
+        latest = alert["latest_autocorrelation"]
+        latest_text = "n/a" if pd.isna(latest) else f"{latest:.2f}"
+        st.write(
+            f"Status: **{state}**. Latest 13-week lag-1 autocorrelation: **{latest_text}**. "
+            f"Alert threshold: **{alert['threshold']:.2f}**. {alert['message']}"
+        )
+        regime_chart = go.Figure()
+        regime_chart.add_trace(
+            go.Scatter(
+                x=rolling.index,
+                y=rolling.values,
+                mode="lines",
+                name="13-week lag-1 autocorrelation",
+                line=dict(color="#0d6e6e", width=3),
+            )
+        )
+        regime_chart.add_hline(y=alert["threshold"], line_dash="dash", line_color="#b45309")
+        regime_chart.add_hline(y=-alert["threshold"], line_dash="dash", line_color="#b45309")
+        regime_chart.update_layout(
+            title="Noise residual regime monitor",
+            height=360,
+            margin=dict(l=20, r=20, t=60, b=20),
+            yaxis_title="Rolling autocorrelation",
+        )
+        st.plotly_chart(regime_chart, width="stretch")
 
 st.sidebar.header("Run Notes")
 st.sidebar.write("1. Refresh inventory data with `python refresh_eia_ng_inventory.py`.")

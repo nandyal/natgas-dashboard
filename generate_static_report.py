@@ -20,6 +20,9 @@ from dashboard_data import (
     load_inventory_data,
     monthly_returns,
     normalized_prices,
+    residual_acf_pacf_table,
+    residual_regime_alert,
+    rolling_residual_autocorrelation,
     seasonal_inventory_profile,
     split_residual_components,
     summarize_inventory,
@@ -225,8 +228,12 @@ def decomposition_chart(df: pd.DataFrame) -> str:
 def decomposition_analysis_html(df: pd.DataFrame) -> str:
     decomp = inventory_decomposition(df)
     resid = pd.Series(decomp.resid, index=decomp.observed.index).dropna()
+    structured_residual, noise_residual = split_residual_components(resid)
+    noise = noise_residual.dropna()
     lb = acorr_ljungbox(resid, lags=[13, 26], return_df=True)
+    noise_lb = acorr_ljungbox(noise, lags=[13, 26], return_df=True)
     acf1 = resid.autocorr(1)
+    noise_acf1 = noise.autocorr(1)
     winter_months = resid.groupby(resid.index.month).apply(lambda s: s.abs().mean())
     winter_peak_month = int(winter_months.sort_values(ascending=False).index[0])
     winter_peak_name = pd.Timestamp(year=2000, month=winter_peak_month, day=1).strftime("%B")
@@ -236,6 +243,11 @@ def decomposition_analysis_html(df: pd.DataFrame) -> str:
         .sort_values(ascending=False)
         .head(4)
         .index.tolist()
+    )
+    noise_interpretation = (
+        "The remaining Noise passes this white-noise check at the 5% level, so the STL plus AR(4) residual filter is absorbing most of the visible short-run structure."
+        if noise_lb.loc[13, "lb_pvalue"] > 0.05 and noise_lb.loc[26, "lb_pvalue"] > 0.05
+        else "The remaining Noise still shows serial dependence, so the decomposition should be treated as an incomplete split rather than a pure white-noise model."
     )
     return f"""
     <div class="analysis-box">
@@ -248,9 +260,124 @@ def decomposition_analysis_html(df: pd.DataFrame) -> str:
       <p class="small">
         The largest leftover disturbances cluster around winter transition weeks rather than appearing evenly spread through the year. Absolute residuals are largest in
         <strong>{winter_peak_name}</strong>, and the most volatile weeks are
-        <strong>{", ".join(str(week) for week in top_weeks)}</strong>. In the figure, this leftover component is split heuristically into a smoother
-        <strong>Structured Residual</strong> line, meant to capture winter weather shocks and storage-regime shifts, and a faster-moving <strong>Noise</strong> line for the remaining short-run variation.
+        <strong>{", ".join(str(week) for week in top_weeks)}</strong>. In the figure, this leftover component is split using an AR(4) residual filter into a
+        <strong>Structured Residual</strong> line, meant to capture winter weather shocks, storage-regime shifts, and short-memory residual momentum, and a faster-moving <strong>Noise</strong> line for the remaining short-run variation.
       </p>
+      <p class="small">
+        After the split, the Noise component has lag-1 autocorrelation of <strong>{noise_acf1:.2f}</strong>. The Ljung-Box p-values for Noise are
+        <strong>{noise_lb.loc[13, 'lb_pvalue']:.4f}</strong> at 13 lags and <strong>{noise_lb.loc[26, 'lb_pvalue']:.4f}</strong> at 26 lags.
+        Values above 0.05 support a white-noise interpretation; values below 0.05 indicate remaining serial dependence. {noise_interpretation}
+      </p>
+    </div>
+    """
+
+
+def adf_test_html(df: pd.DataFrame) -> str:
+    tests = [df.attrs.get("adf_inventory_level", {}), df.attrs.get("adf_weekly_change", {})]
+    rows = ""
+    for test in tests:
+        if not test:
+            continue
+        rows += (
+            f"<tr><td>{test['label']}</td><td>{test['adf_statistic']:.2f}</td>"
+            f"<td>{test['p_value']:.4f}</td><td>{test['used_lags']}</td>"
+            f"<td>{test['nobs']}</td><td>{test['interpretation']}</td></tr>"
+        )
+    return f"""
+    <div class="analysis-box">
+      <h3>ADF stationarity check</h3>
+      <p class="small">The Augmented Dickey-Fuller test checks whether the inventory series behaves like it has a unit root. The weekly-change test is included because storage levels are seasonal and persistent, while weekly changes are the closer input for shock analysis.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Series</th><th>ADF statistic</th><th>p-value</th><th>Used lags</th><th>Observations</th><th>Interpretation</th></tr></thead>
+          <tbody>{rows}</tbody>
+        </table>
+      </div>
+    </div>
+    """
+
+
+def noise_acf_pacf_chart(df: pd.DataFrame) -> str:
+    decomp = inventory_decomposition(df)
+    resid = pd.Series(decomp.resid, index=decomp.observed.index)
+    _, noise = split_residual_components(resid)
+    corr = residual_acf_pacf_table(noise, nlags=26)
+    confidence = float(corr["confidence"].iloc[0]) if not corr.empty else 0.0
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        subplot_titles=("Noise ACF", "Noise PACF"),
+        shared_yaxes=True,
+    )
+    fig.add_trace(go.Bar(x=corr["lag"], y=corr["acf"], marker_color="#0f766e", name="ACF"), row=1, col=1)
+    fig.add_trace(go.Bar(x=corr["lag"], y=corr["pacf"], marker_color="#1d4ed8", name="PACF"), row=1, col=2)
+    for col in [1, 2]:
+        fig.add_hline(y=confidence, line_dash="dash", line_color="#991b1b", row=1, col=col)
+        fig.add_hline(y=-confidence, line_dash="dash", line_color="#991b1b", row=1, col=col)
+    fig.update_layout(
+        title="Noise residual ACF/PACF diagnostic",
+        template="plotly_white",
+        height=420,
+        margin=dict(l=20, r=20, t=70, b=20),
+        showlegend=False,
+    )
+    fig.update_xaxes(title_text="Lag")
+    fig.update_yaxes(title_text="Correlation")
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def residual_regime_monitor_html(df: pd.DataFrame) -> str:
+    decomp = inventory_decomposition(df)
+    resid = pd.Series(decomp.resid, index=decomp.observed.index)
+    _, noise = split_residual_components(resid)
+    rolling = rolling_residual_autocorrelation(noise, window=13, lag=1)
+    alert = residual_regime_alert(noise, window=13, lag=1)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=rolling.index,
+            y=rolling.values,
+            mode="lines",
+            name="13-week rolling lag-1 autocorrelation",
+            line=dict(color="#0f766e", width=3),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[rolling.index.min(), rolling.index.max()],
+            y=[alert["threshold"], alert["threshold"]],
+            mode="lines",
+            name="Alert threshold",
+            line=dict(color="#b45309", width=2, dash="dash"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[rolling.index.min(), rolling.index.max()],
+            y=[-alert["threshold"], -alert["threshold"]],
+            mode="lines",
+            name="Negative alert threshold",
+            line=dict(color="#b45309", width=2, dash="dash"),
+        )
+    )
+    fig.update_layout(
+        title="Noise residual regime monitor",
+        template="plotly_white",
+        height=360,
+        margin=dict(l=20, r=20, t=60, b=20),
+        yaxis_title="13-week rolling autocorrelation",
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="left", x=0),
+    )
+    latest = alert["latest_autocorrelation"]
+    latest_text = "n/a" if pd.isna(latest) else f"{latest:.2f}"
+    threshold_text = f"{alert['threshold']:.2f}"
+    state = "Alert" if alert["alert"] else "Normal"
+    return f"""
+    <div class="analysis-box">
+      <h3>Residual regime monitor</h3>
+      <p class="small">This monitor tracks the 13-week rolling lag-1 autocorrelation of the final Noise residual. Rising absolute autocorrelation suggests the model is leaving more structure in the residual, which can indicate a storage-regime shift or a new short-memory pattern.</p>
+      <p class="small"><strong>Status:</strong> {state}. <strong>Latest autocorrelation:</strong> {latest_text}. <strong>Alert threshold:</strong> {threshold_text}. {alert['message']}</p>
+      {fig.to_html(full_html=False, include_plotlyjs=False)}
     </div>
     """
 
@@ -384,7 +511,7 @@ def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFram
     if sentiment_df.empty:
         return """
         <section class="panel">
-          <h2>Inventory shock sentiment</h2>
+          <h2>Inventory shock sentiment Analysis</h2>
           <p>FinBERT and VADER sentiment has not been generated yet for unusual inventory shocks.</p>
         </section>
         """
@@ -404,12 +531,14 @@ def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFram
     row_chunks = []
     for row in recent.itertuples():
         ngf_cell = f"{row.ngf_change_pct:+.1f}%" if pd.notna(row.ngf_change_pct) else ""
+        evt_cell = "Yes" if bool(getattr(row, "is_extreme_tail_event", False)) else "No"
         row_chunks.append(
             "<tr>"
             f"<td>{row.period.strftime('%Y-%m-%d')}</td>"
             f"<td>{row.weekly_change_bcf:+.0f} Bcf</td>"
             f"<td>{ngf_cell}</td>"
-            f"<td>{row.abs_zscore:.2f}</td>"
+            f"<td>{'<strong>' if row.abs_zscore > 3 else ''}{row.abs_zscore:.2f}{'</strong>' if row.abs_zscore > 3 else ''}</td>"
+            f"<td>{evt_cell}</td>"
             f"<td>{row.inventory_signal}</td>"
             f"<td>{row.finbert_label}<br>({row.finbert_score:.2f})</td>"
             f"<td>{row.vader_compound:.2f}</td>"
@@ -421,19 +550,23 @@ def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFram
     top_finbert = finbert_counts.index[0] if not finbert_counts.empty else "n/a"
     return f"""
     <section class="panel">
-      <h2>Inventory shock sentiment</h2>
+      <h2>Inventory shock sentiment Analysis</h2>
       <p>This section scores unusually large weekly inventory builds and drawdowns using FinBERT and VADER on structured event summaries. It is intended as a sentiment layer over inventory shocks rather than a substitute for market fundamentals.</p>
       <p class="small">Important: the NLP labels reflect text tone, not necessarily gas-price direction. For example, FinBERT can classify a large inventory drawdown as textually negative even when the inventory shock is bullish for natural gas prices.</p>
+      <p class="small">The chart overlays Peaks-over-Threshold tail cutoffs and Generalized Pareto Distribution Value-at-Risk lines. Amber bars are inventory changes that cross the fitted GPD VaR threshold and are classified as Extreme Tail Events.</p>
       {chart}
       <p class="small"><strong>Average VADER compound:</strong> {vader_mean:.2f}. <strong>Most common FinBERT label:</strong> {top_finbert}.</p>
+      {finbert_draw_volatility_html(sentiment_df, market_close)}
+      {inventory_signal_probability_html(sentiment_df, market_close)}
       <div class="table-wrap">
       <table>
         <thead>
           <tr>
             <th>Week ending</th>
             <th>Weekly change</th>
-            <th>Weekly Natural<br>Gas Price</th>
+            <th>Weekly Natural Gas<br>Price Change</th>
             <th>Shock z-score</th>
+            <th>EVT tail event</th>
             <th>Inventory signal</th>
             <th>FinBERT</th>
             <th>VADER</th>
@@ -446,9 +579,191 @@ def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFram
     """
 
 
+def inventory_signal_probability_html(sentiment_df: pd.DataFrame, market_close: pd.DataFrame) -> str:
+    if "NG=F" not in market_close.columns:
+        return ""
+    ng_price = market_close["NG=F"].dropna()
+    if ng_price.empty:
+        return ""
+
+    ng_returns = ng_price.pct_change().dropna()
+    records = []
+    for row in sentiment_df.dropna(subset=["period", "weekly_change_bcf", "finbert_label"]).itertuples():
+        event_date = pd.Timestamp(row.period)
+        forward_date = event_date + pd.Timedelta(days=7)
+        if forward_date > ng_price.index.max():
+            continue
+        start_price = ng_price.asof(event_date)
+        end_price = ng_price.asof(forward_date)
+        trailing = ng_returns[ng_returns.index <= event_date].tail(63)
+        if pd.isna(start_price) or pd.isna(end_price) or len(trailing) < 20:
+            continue
+        forward_return = (float(end_price) / float(start_price) - 1) * 100
+        two_sigma_threshold = float(trailing.std() * (5 ** 0.5) * 2 * 100)
+        records.append(
+            {
+                "finbert_label": row.finbert_label,
+                "inventory_condition": "Inventory draw" if row.weekly_change_bcf < 0 else "Inventory build",
+                "forward_1w_return_pct": forward_return,
+                "two_sigma_threshold_pct": two_sigma_threshold,
+                "two_sigma_price_spike": forward_return >= two_sigma_threshold,
+            }
+        )
+
+    events = pd.DataFrame(records)
+    if events.empty:
+        return ""
+
+    total_events = len(events)
+    grouped = (
+        events.groupby(["finbert_label", "inventory_condition"], dropna=False)
+        .agg(
+            events=("two_sigma_price_spike", "size"),
+            two_sigma_spikes=("two_sigma_price_spike", "sum"),
+            avg_forward_1w_return_pct=("forward_1w_return_pct", "mean"),
+            avg_two_sigma_threshold_pct=("two_sigma_threshold_pct", "mean"),
+        )
+        .reset_index()
+    )
+    grouped["joint_probability_pct"] = grouped["two_sigma_spikes"] / total_events * 100
+    grouped["conditional_probability_pct"] = grouped["two_sigma_spikes"] / grouped["events"] * 100
+
+    def sort_key(row) -> tuple[int, int]:
+        label_order = {"negative": 0, "neutral": 1, "positive": 2}
+        condition_order = {"Inventory draw": 0, "Inventory build": 1}
+        return (
+            label_order.get(str(row.finbert_label), 99),
+            condition_order.get(str(row.inventory_condition), 99),
+        )
+
+    grouped = grouped.sort_values(by=["finbert_label", "inventory_condition"], key=lambda col: col)
+    grouped = pd.DataFrame(sorted(grouped.itertuples(index=False), key=sort_key), columns=grouped.columns)
+    rows = "".join(
+        "<tr>"
+        f"<td>{row.finbert_label}</td>"
+        f"<td>{row.inventory_condition}</td>"
+        f"<td>{row.events:.0f}</td>"
+        f"<td>{row.two_sigma_spikes:.0f}</td>"
+        f"<td>{row.joint_probability_pct:.1f}%</td>"
+        f"<td>{row.conditional_probability_pct:.1f}%</td>"
+        f"<td>{row.avg_forward_1w_return_pct:+.1f}%</td>"
+        f"<td>{row.avg_two_sigma_threshold_pct:.1f}%</td>"
+        "</tr>"
+        for row in grouped.itertuples(index=False)
+    )
+    focus = grouped[
+        (grouped["finbert_label"] == "negative")
+        & (grouped["inventory_condition"] == "Inventory draw")
+    ]
+    focus_text = ""
+    if not focus.empty:
+        focus_row = focus.iloc[0]
+        focus_text = (
+            f" For the key signal, negative FinBERT sentiment plus an inventory draw produced "
+            f"{focus_row['two_sigma_spikes']:.0f} two-sigma upside NG=F spikes from {focus_row['events']:.0f} events, "
+            f"a conditional probability of {focus_row['conditional_probability_pct']:.1f}%."
+        )
+
+    return f"""
+      <div class="analysis-box">
+        <h3>Signal table: FinBERT plus inventory shock</h3>
+        <p class="small">This table estimates the probability of a forward one-week NG=F price spike after each sentiment/inventory condition. A price spike is defined as a one-week NG=F gain greater than two times trailing weekly volatility, estimated from the prior 63 trading days.{focus_text}</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>FinBERT label</th><th>Inventory condition</th><th>Events</th><th>2-sigma spikes</th><th>Joint probability</th><th>P(spike | signal)</th><th>Avg next-week NG=F return</th><th>Avg 2-sigma threshold</th></tr>
+            </thead>
+            <tbody>{rows}</tbody>
+          </table>
+        </div>
+      </div>
+    """
+
+
+def finbert_draw_volatility_html(sentiment_df: pd.DataFrame, market_close: pd.DataFrame) -> str:
+    if "NG=F" not in market_close.columns:
+        return ""
+    draws = sentiment_df[
+        (sentiment_df["weekly_change_bcf"] < 0)
+        & sentiment_df["finbert_label"].notna()
+    ].copy()
+    if draws.empty:
+        return ""
+
+    ng_returns = market_close["NG=F"].pct_change().dropna()
+    records = []
+    for row in draws.itertuples():
+        start = pd.Timestamp(row.period)
+        end = start + pd.Timedelta(days=30)
+        window = ng_returns[(ng_returns.index > start) & (ng_returns.index <= end)]
+        if len(window) < 5:
+            continue
+        records.append(
+            {
+                "cohort": "Negative FinBERT bullish draw" if row.finbert_label == "negative" else "Other bullish draw",
+                "realized_volatility": float(window.std() * (252 ** 0.5) * 100),
+                "absolute_return": float(window.abs().mean() * 100),
+            }
+        )
+    result = pd.DataFrame(records)
+    if result.empty:
+        return ""
+    grouped = result.groupby("cohort").agg(
+        events=("realized_volatility", "size"),
+        avg_30d_realized_vol=("realized_volatility", "mean"),
+        median_30d_realized_vol=("realized_volatility", "median"),
+        avg_abs_daily_move=("absolute_return", "mean"),
+    )
+    desired_order = ["Negative FinBERT bullish draw", "Other bullish draw"]
+    grouped = grouped.reindex([idx for idx in desired_order if idx in grouped.index])
+    rows = "".join(
+        f"<tr><td>{idx}</td><td>{row.events:.0f}</td><td>{row.avg_30d_realized_vol:.1f}%</td><td>{row.median_30d_realized_vol:.1f}%</td><td>{row.avg_abs_daily_move:.2f}%</td></tr>"
+        for idx, row in grouped.iterrows()
+    )
+    takeaway = ""
+    if "Negative FinBERT bullish draw" in grouped.index and "Other bullish draw" in grouped.index:
+        neg_vol = grouped.loc["Negative FinBERT bullish draw", "avg_30d_realized_vol"]
+        other_vol = grouped.loc["Other bullish draw", "avg_30d_realized_vol"]
+        direction = "higher" if neg_vol > other_vol else "lower"
+        takeaway = (
+            f" In this sample, negative FinBERT labels during bullish physical draws were followed by "
+            f"{direction} average 30-day realized volatility than other bullish draws "
+            f"({neg_vol:.1f}% versus {other_vol:.1f}%)."
+        )
+    elif "Negative FinBERT bullish draw" in grouped.index:
+        neg_vol = grouped.loc["Negative FinBERT bullish draw", "avg_30d_realized_vol"]
+        events = int(grouped.loc["Negative FinBERT bullish draw", "events"])
+        takeaway = (
+            f" In the current sample, all bullish physical draws with valid forward NG=F data were labeled negative by FinBERT, "
+            f"so there is no separate non-negative bullish-draw cohort for a direct comparison. These {events} events were followed by "
+            f"average 30-day realized volatility of {neg_vol:.1f}%."
+        )
+    return f"""
+      <div class="analysis-box">
+        <h3>FinBERT tone versus post-draw volatility</h3>
+        <p class="small">This test asks whether a textually <strong>negative</strong> FinBERT label during a physically <strong>bullish</strong> inventory draw is followed by higher NG=F volatility. Realized volatility is calculated from daily NG=F returns over the 30 calendar days after each event.{takeaway}</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cohort</th><th>Events</th><th>Avg 30d realized vol</th><th>Median 30d realized vol</th><th>Avg absolute daily move</th></tr></thead>
+            <tbody>{rows}</tbody>
+          </table>
+        </div>
+      </div>
+    """
+
+
 def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
     df = sentiment_df.sort_values("period").copy()
     finbert_numeric = df["finbert_label"].map({"negative": -1, "neutral": 0, "positive": 1}).fillna(0)
+    upper_var = df["evt_upper_var_bcf"].dropna().iloc[0] if "evt_upper_var_bcf" in df and df["evt_upper_var_bcf"].notna().any() else None
+    lower_var = df["evt_lower_var_bcf"].dropna().iloc[0] if "evt_lower_var_bcf" in df and df["evt_lower_var_bcf"].notna().any() else None
+    upper_tail = df["evt_upper_tail_threshold_bcf"].dropna().iloc[0] if "evt_upper_tail_threshold_bcf" in df and df["evt_upper_tail_threshold_bcf"].notna().any() else None
+    lower_tail = df["evt_lower_tail_threshold_bcf"].dropna().iloc[0] if "evt_lower_tail_threshold_bcf" in df and df["evt_lower_tail_threshold_bcf"].notna().any() else None
+
+    def bar_color(row) -> str:
+        if bool(getattr(row, "is_extreme_tail_event", False)):
+            return "#f59e0b"
+        return "#b91c1c" if row.weekly_change_bcf < 0 else "#2563eb"
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
@@ -456,11 +771,29 @@ def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
             x=df["period"],
             y=df["weekly_change_bcf"],
             name="Weekly inventory change (Bcf)",
-            marker_color=["#b91c1c" if x < 0 else "#2563eb" for x in df["weekly_change_bcf"]],
+            marker_color=[bar_color(row) for row in df.itertuples()],
             opacity=0.55,
         ),
         secondary_y=False,
     )
+    for value, name, color, dash in [
+        (upper_tail, "Upper POT tail threshold", "#f97316", "dot"),
+        (lower_tail, "Lower POT tail threshold", "#f97316", "dot"),
+        (upper_var, "Upper GPD VaR", "#d97706", "dash"),
+        (lower_var, "Lower GPD VaR", "#d97706", "dash"),
+    ]:
+        if value is None:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=[df["period"].min(), df["period"].max()],
+                y=[value, value],
+                name=name,
+                mode="lines",
+                line=dict(color=color, width=2, dash=dash),
+            ),
+            secondary_y=False,
+        )
     fig.add_trace(
         go.Scatter(
             x=df["period"],
@@ -488,7 +821,7 @@ def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
         template="plotly_white",
         height=460,
         margin=dict(l=20, r=20, t=60, b=20),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="left", x=0),
     )
     fig.update_yaxes(title_text="Weekly change (Bcf)", secondary_y=False)
     fig.update_yaxes(
@@ -753,6 +1086,9 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, senti
       <p>The inventory observed series is split into longterm trend, sesonal change and random shifts.</p>
       {decomposition_chart(df)}
       {decomposition_analysis_html(df)}
+      {adf_test_html(df)}
+      {noise_acf_pacf_chart(df)}
+      {residual_regime_monitor_html(df)}
     </section>
 
     <section class="panel">
@@ -779,7 +1115,7 @@ def main() -> int:
     df = load_inventory_data(BASE_DIR)
     release = latest_release_payload(df)
     market_tickers = list(dict.fromkeys(DEFAULT_TICKERS + MONTHLY_RETURN_TICKERS))
-    market_close = fetch_market_prices(market_tickers, start="2019-01-01")
+    market_close = fetch_market_prices(market_tickers, start="2017-01-01")
     sentiment_df = load_sentiment_events()
     REPORT_PATH.write_text(html_page(df, release, market_close, sentiment_df), encoding="utf-8")
     print(f"Wrote {REPORT_PATH}")

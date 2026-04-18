@@ -29,13 +29,21 @@ RECENT_SENTIMENT_CSV = BASE_DIR / "market_sentiment_recent.csv"
 def load_market_sentiment() -> pd.DataFrame:
     if not SENTIMENT_CSV.exists():
         return pd.DataFrame()
-    return pd.read_csv(SENTIMENT_CSV, parse_dates=["period"])
+    df = pd.read_csv(SENTIMENT_CSV, parse_dates=["period"])
+    if "shock_z_score" not in df.columns and {"monthly_return_pct", "trailing_vol_pct"}.issubset(df.columns):
+        monthly_vol = df["trailing_vol_pct"] / (12 ** 0.5)
+        df["shock_z_score"] = df["monthly_return_pct"] / monthly_vol.replace(0, pd.NA)
+    return df
 
 
 def load_recent_market_sentiment() -> pd.DataFrame:
     if not RECENT_SENTIMENT_CSV.exists():
         return pd.DataFrame()
-    return pd.read_csv(RECENT_SENTIMENT_CSV, parse_dates=["as_of_date", "analysis_end_date"])
+    df = pd.read_csv(RECENT_SENTIMENT_CSV, parse_dates=["as_of_date", "analysis_end_date"])
+    if "shock_z_score" not in df.columns and {"one_month_return_pct", "trailing_vol_pct"}.issubset(df.columns):
+        monthly_vol = df["trailing_vol_pct"] / (12 ** 0.5)
+        df["shock_z_score"] = df["one_month_return_pct"] / monthly_vol.replace(0, pd.NA)
+    return df
 
 
 def nav_html() -> str:
@@ -165,14 +173,14 @@ def sentiment_chart(sentiment_df: pd.DataFrame) -> str:
 def sentiment_table_html(recent_sentiment_df: pd.DataFrame) -> str:
     latest = recent_sentiment_df.sort_values("ticker").copy()
     rows = "".join(
-        f"<tr><td>{row.ticker}</td><td>{row.as_of_date.strftime('%Y-%m-%d')}</td><td>{row.analysis_end_date.strftime('%Y-%m-%d')}</td><td>{row.one_week_return_pct:+.1f}%</td><td>{row.finbert_label}<br>({row.finbert_score:.2f})</td><td>{row.vader_compound:.2f}</td><td>{row.one_month_return_pct:+.1f}%</td></tr>"
+        f"<tr><td>{row.ticker}</td><td>{row.as_of_date.strftime('%Y-%m-%d')}</td><td>{row.analysis_end_date.strftime('%Y-%m-%d')}</td><td>{row.one_week_return_pct:+.1f}%</td><td>{row.one_month_return_pct:+.1f}%</td><td>{row.finbert_label}<br>({row.finbert_score:.2f})</td><td>{row.shock_z_score:.2f}</td></tr>"
         for row in latest.itertuples()
     )
     return f"""
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Ticker</th><th>Sentiment anchor date</th><th>Window end date</th><th>1 week return</th><th>FinBERT</th><th>VADER</th><th>1 month return</th></tr>
+          <tr><th>Ticker</th><th>Sentiment anchor date</th><th>Window end date</th><th>1 week return</th><th>1 month return</th><th>FinBERT</th><th>Shock Z score</th></tr>
         </thead>
         <tbody>{rows}</tbody>
       </table>
@@ -184,13 +192,13 @@ def sentiment_section_html(sentiment_df: pd.DataFrame, recent_sentiment_df: pd.D
     if sentiment_df.empty:
         return """
         <section class="panel">
-          <h2>Stock, ETF, and futures sentiment</h2>
+          <h2>Stock, ETF, and futures sentiment Analysis</h2>
           <p>Market sentiment analysis has not been generated yet.</p>
         </section>
         """
     return f"""
     <section class="panel">
-      <h2>Stock, ETF, and futures sentiment</h2>
+      <h2>Stock, ETF, and futures sentiment Analysis</h2>
       <p>This section applies FinBERT and VADER to monthly price-event summaries for each tracked stock, ETF, and natural gas futures series. The chart shows the longer historical pattern, while the table below summarizes the last 30 days as of today.</p>
       <p class="small">These NLP labels describe the tone of price-event summaries, so they should be read alongside realized price moves rather than as standalone trading signals.</p>
       {sentiment_chart(sentiment_df)}

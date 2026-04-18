@@ -6,8 +6,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
+from scipy.stats import genpareto
 import yfinance as yf
-from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.seasonal import STL
+from statsmodels.tsa.ar_model import AutoReg
+from statsmodels.tsa.stattools import acf, adfuller, pacf
 
 
 INVENTORY_CSV = "eia_ng_total_inventory_last_10_years.csv"
@@ -45,7 +48,34 @@ def load_inventory_data(base_dir: Path) -> pd.DataFrame:
     df["year"] = df["period"].dt.year
     df["inventory_52w_avg"] = df["value_bcf"].rolling(52).mean()
     df["inventory_52w_std"] = df["value_bcf"].rolling(52).std()
+    df.attrs["adf_inventory_level"] = adf_test_summary(df["value_bcf"], "Inventory level")
+    df.attrs["adf_weekly_change"] = adf_test_summary(df["value_bcf"].diff(), "Weekly change")
     return df
+
+
+def adf_test_summary(series: pd.Series, label: str) -> dict[str, float | str | int]:
+    clean = pd.Series(series).dropna()
+    if len(clean) < 20:
+        return {
+            "label": label,
+            "adf_statistic": np.nan,
+            "p_value": np.nan,
+            "used_lags": 0,
+            "nobs": int(len(clean)),
+            "interpretation": "Insufficient observations for ADF test.",
+        }
+    statistic, p_value, used_lags, nobs, critical_values, _ = adfuller(clean, autolag="AIC")
+    return {
+        "label": label,
+        "adf_statistic": float(statistic),
+        "p_value": float(p_value),
+        "used_lags": int(used_lags),
+        "nobs": int(nobs),
+        "critical_1pct": float(critical_values["1%"]),
+        "critical_5pct": float(critical_values["5%"]),
+        "critical_10pct": float(critical_values["10%"]),
+        "interpretation": "Stationary at 5% significance." if p_value < 0.05 else "Cannot reject a unit root at 5% significance.",
+    }
 
 
 def summarize_inventory(df: pd.DataFrame) -> InventorySummary:
@@ -96,14 +126,125 @@ def seasonal_naive_inventory_forecast(df: pd.DataFrame, horizon: int = 13) -> pd
 
 def inventory_decomposition(df: pd.DataFrame):
     series = df.set_index("period")["value_bcf"].asfreq("W-FRI")
-    return seasonal_decompose(series, model="additive", period=52, extrapolate_trend="freq")
+    clean = series.interpolate(limit_direction="both")
+    return STL(clean, period=52, seasonal=53, trend=53, robust=True).fit()
 
 
-def split_residual_components(residual: pd.Series, window: int = 4) -> tuple[pd.Series, pd.Series]:
+def split_residual_components(
+    residual: pd.Series,
+    window: int = 4,
+    ar_lags: int = 4,
+) -> tuple[pd.Series, pd.Series]:
     clean = residual.dropna().copy()
-    structured = clean.rolling(window=window, center=True, min_periods=1).mean()
+    rolling_structured = clean.rolling(window=window, center=True, min_periods=1).mean()
+    if len(clean) <= ar_lags + 20:
+        structured = rolling_structured
+    else:
+        try:
+            ar_model = AutoReg(clean, lags=ar_lags, old_names=False).fit()
+            ar_structured = ar_model.fittedvalues.reindex(clean.index)
+            structured = ar_structured.combine_first(rolling_structured)
+        except Exception:
+            structured = rolling_structured
     noise = clean - structured
     return structured, noise
+
+
+def residual_acf_pacf_table(series: pd.Series, nlags: int = 26) -> pd.DataFrame:
+    clean = pd.Series(series).dropna()
+    max_lag = min(nlags, max(len(clean) // 2 - 1, 1))
+    acf_values = acf(clean, nlags=max_lag, fft=False)
+    pacf_values = pacf(clean, nlags=max_lag, method="ywm")
+    confidence = 1.96 / np.sqrt(len(clean))
+    return pd.DataFrame(
+        {
+            "lag": range(1, max_lag + 1),
+            "acf": acf_values[1:],
+            "pacf": pacf_values[1:],
+            "confidence": confidence,
+        }
+    )
+
+
+def rolling_residual_autocorrelation(
+    series: pd.Series,
+    window: int = 13,
+    lag: int = 1,
+) -> pd.Series:
+    clean = pd.Series(series).dropna()
+    return clean.rolling(window=window, min_periods=window).apply(
+        lambda values: pd.Series(values).autocorr(lag=lag),
+        raw=False,
+    )
+
+
+def residual_regime_alert(
+    series: pd.Series,
+    window: int = 13,
+    lag: int = 1,
+    fixed_threshold: float = 0.35,
+    quantile: float = 0.90,
+) -> dict[str, float | bool | str]:
+    rolling = rolling_residual_autocorrelation(series, window=window, lag=lag).dropna()
+    if rolling.empty:
+        return {
+            "latest_autocorrelation": np.nan,
+            "threshold": fixed_threshold,
+            "alert": False,
+            "message": "Insufficient residual history for regime alert.",
+        }
+    quantile_threshold = float(rolling.abs().quantile(quantile))
+    threshold = max(fixed_threshold, quantile_threshold)
+    latest = float(rolling.iloc[-1])
+    alert = abs(latest) >= threshold
+    return {
+        "latest_autocorrelation": latest,
+        "threshold": threshold,
+        "alert": bool(alert),
+        "message": (
+            "Residual autocorrelation is elevated; noise structure may be strengthening."
+            if alert
+            else "Residual autocorrelation is below the regime-shift alert threshold."
+        ),
+    }
+
+
+def gpd_tail_var_thresholds(
+    weekly_change: pd.Series,
+    threshold_quantile: float = 0.90,
+    var_quantile: float = 0.99,
+) -> dict[str, float | int]:
+    changes = pd.Series(weekly_change).dropna()
+    if len(changes) < 100:
+        raise ValueError("Need at least 100 weekly changes for EVT tail fitting.")
+
+    def fit_one_tail(values: pd.Series) -> tuple[float, float, int]:
+        threshold = float(values.quantile(threshold_quantile))
+        exceedances = values[values > threshold] - threshold
+        exceedances = exceedances[exceedances > 0]
+        if len(exceedances) < 10:
+            raise ValueError("Need at least 10 exceedances for GPD tail fitting.")
+        shape, _, scale = genpareto.fit(exceedances, floc=0)
+        exceedance_probability = len(exceedances) / len(values)
+        tail_probability = 1 - var_quantile
+        if abs(shape) < 1e-6:
+            var_value = threshold + scale * np.log(exceedance_probability / tail_probability)
+        else:
+            var_value = threshold + (scale / shape) * ((exceedance_probability / tail_probability) ** shape - 1)
+        return float(var_value), float(threshold), int(len(exceedances))
+
+    upper_var, upper_threshold, upper_exceedances = fit_one_tail(changes[changes > 0])
+    lower_var_abs, lower_threshold_abs, lower_exceedances = fit_one_tail((-changes[changes < 0]))
+    return {
+        "upper_var_bcf": upper_var,
+        "lower_var_bcf": -lower_var_abs,
+        "upper_tail_threshold_bcf": upper_threshold,
+        "lower_tail_threshold_bcf": -lower_threshold_abs,
+        "upper_exceedances": upper_exceedances,
+        "lower_exceedances": lower_exceedances,
+        "threshold_quantile": threshold_quantile,
+        "var_quantile": var_quantile,
+    }
 
 
 def fetch_market_prices(

@@ -36,14 +36,22 @@ def get_market_data(start_date: str) -> pd.DataFrame:
 def get_market_sentiment() -> pd.DataFrame:
     if not MARKET_SENTIMENT_CSV.exists():
         return pd.DataFrame()
-    return pd.read_csv(MARKET_SENTIMENT_CSV, parse_dates=["period"])
+    df = pd.read_csv(MARKET_SENTIMENT_CSV, parse_dates=["period"])
+    if "shock_z_score" not in df.columns and {"monthly_return_pct", "trailing_vol_pct"}.issubset(df.columns):
+        monthly_vol = df["trailing_vol_pct"] / (12 ** 0.5)
+        df["shock_z_score"] = df["monthly_return_pct"] / monthly_vol.replace(0, pd.NA)
+    return df
 
 
 @st.cache_data(show_spinner=False)
 def get_recent_market_sentiment() -> pd.DataFrame:
     if not MARKET_SENTIMENT_RECENT_CSV.exists():
         return pd.DataFrame()
-    return pd.read_csv(MARKET_SENTIMENT_RECENT_CSV, parse_dates=["as_of_date", "analysis_end_date"])
+    df = pd.read_csv(MARKET_SENTIMENT_RECENT_CSV, parse_dates=["as_of_date", "analysis_end_date"])
+    if "shock_z_score" not in df.columns and {"one_month_return_pct", "trailing_vol_pct"}.issubset(df.columns):
+        monthly_vol = df["trailing_vol_pct"] / (12 ** 0.5)
+        df["shock_z_score"] = df["one_month_return_pct"] / monthly_vol.replace(0, pd.NA)
+    return df
 
 
 st.title("Natural Gas Market Dashboard")
@@ -88,6 +96,7 @@ with tabs[2]:
     )
 
 with tabs[3]:
+    st.subheader("Stock, ETF, and futures sentiment Analysis")
     if sentiment.empty:
         st.write("Run `python market_sentiment_analysis.py` to generate stock, ETF, and futures sentiment results.")
     else:
@@ -124,7 +133,7 @@ with tabs[3]:
 
         if not recent_sentiment.empty:
             st.dataframe(
-                recent_sentiment[["ticker", "as_of_date", "analysis_end_date", "one_week_return_pct", "finbert_label", "finbert_score", "vader_compound", "one_month_return_pct"]].rename(
+                recent_sentiment[["ticker", "as_of_date", "analysis_end_date", "one_week_return_pct", "one_month_return_pct", "finbert_label", "finbert_score", "shock_z_score"]].rename(
                     columns={
                         "as_of_date": "sentiment_anchor_date",
                         "analysis_end_date": "window_end_date",

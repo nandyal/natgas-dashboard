@@ -111,6 +111,11 @@ def build_market_sentiment_events() -> pd.DataFrame:
                     "period": period,
                     "monthly_return_pct": monthly_ret * 100,
                     "trailing_vol_pct": float(trailing_vol.asof(period) * 100) if pd.notna(trailing_vol.asof(period)) else None,
+                    "shock_z_score": (
+                        float(monthly_ret / (trailing_vol.asof(period) / (12 ** 0.5)))
+                        if pd.notna(trailing_vol.asof(period)) and trailing_vol.asof(period) > 0
+                        else None
+                    ),
                     "forward_1m_return_pct": float(next_month_return[ticker].get(period) * 100) if pd.notna(next_month_return[ticker].get(period)) else None,
                     "event_text": monthly_event_text(
                         ticker=ticker,
@@ -142,6 +147,7 @@ def build_recent_market_sentiment(close: pd.DataFrame) -> pd.DataFrame:
         one_week_return = latest_price / week_anchor_price - 1
         one_month_return = latest_price / month_anchor_price - 1
         trailing_vol = float((daily[ticker].dropna().tail(30).std() * (252 ** 0.5))) if ticker in daily.columns else 0.0
+        shock_z_score = one_month_return / (trailing_vol / (12 ** 0.5)) if trailing_vol > 0 else None
         records.append(
             {
                 "ticker": ticker,
@@ -150,6 +156,7 @@ def build_recent_market_sentiment(close: pd.DataFrame) -> pd.DataFrame:
                 "one_week_return_pct": one_week_return * 100,
                 "one_month_return_pct": one_month_return * 100,
                 "trailing_vol_pct": trailing_vol * 100,
+                "shock_z_score": shock_z_score,
                 "event_text": recent_event_text(
                     ticker=ticker,
                     as_of_date=latest_date,
