@@ -4,10 +4,13 @@ from datetime import datetime
 from pathlib import Path
 import json
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy.stats import chi2_contingency, genpareto, norm
 from statsmodels.stats.diagnostic import acorr_ljungbox
+from statsmodels.tsa.stattools import ccf
 
 from dashboard_data import (
     DEFAULT_TICKERS,
@@ -17,7 +20,10 @@ from dashboard_data import (
     correlation_matrix,
     fetch_market_prices,
     inventory_decomposition,
+    load_full_inventory_data,
+    load_hdd_data,
     load_inventory_data,
+    merge_inventory_hdd,
     monthly_returns,
     normalized_prices,
     residual_acf_pacf_table,
@@ -35,6 +41,7 @@ REPORT_PATH = DOCS_DIR / "index.html"
 LEGACY_RELEASE_JSON = BASE_DIR / "weekly_natural_gas_inventory_2026-03-20.json"
 MONTHLY_RETURN_TICKERS = ["NG=F", "UNG", "USO"]
 SENTIMENT_CSV = BASE_DIR / "inventory_sentiment_events.csv"
+FULL_HISTORY_INVENTORY_CSV = BASE_DIR / "eia_ng_total_inventory_full_history.csv"
 
 
 def latest_release_payload(df: pd.DataFrame) -> dict:
@@ -56,6 +63,18 @@ def load_sentiment_events() -> pd.DataFrame:
     if not SENTIMENT_CSV.exists():
         return pd.DataFrame()
     df = pd.read_csv(SENTIMENT_CSV, parse_dates=["period"])
+    return df
+
+
+def load_evt_inventory_history(default_df: pd.DataFrame) -> pd.DataFrame:
+    if not FULL_HISTORY_INVENTORY_CSV.exists():
+        return default_df
+    df = pd.read_csv(FULL_HISTORY_INVENTORY_CSV, parse_dates=["period"])
+    df = df.sort_values("period").reset_index(drop=True)
+    df["week_of_year"] = df["period"].dt.isocalendar().week.astype(int)
+    df["year"] = df["period"].dt.year
+    df["inventory_52w_avg"] = df["value_bcf"].rolling(52).mean()
+    df["inventory_52w_std"] = df["value_bcf"].rolling(52).std()
     return df
 
 
@@ -507,7 +526,419 @@ def monthly_returns_table(close: pd.DataFrame) -> str:
     return '<div class="mini-grid">' + "".join(tables) + "</div>"
 
 
-def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFrame) -> str:
+def hdd_overlay_chart(merged_df: pd.DataFrame) -> str:
+    plot_df = merged_df.dropna(subset=["us_hdd_weekly", "weekly_change_bcf"]).copy()
+    plot_df["storage_draw_bcf"] = -plot_df["weekly_change_bcf"]
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Bar(
+            x=plot_df["period"],
+            y=plot_df["storage_draw_bcf"],
+            name="Storage draw (Bcf)",
+            marker_color=np.where(plot_df["storage_draw_bcf"] >= 0, "#b91c1c", "#2563eb"),
+            opacity=0.55,
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=plot_df["period"],
+            y=plot_df["us_hdd_weekly"],
+            name="NOAA weekly HDD",
+            mode="lines",
+            line=dict(color="#1d4ed8", width=3),
+        ),
+        secondary_y=True,
+    )
+    if (plot_df["period"] == pd.Timestamp("2014-04-18")).any():
+        polar = plot_df.loc[plot_df["period"] == pd.Timestamp("2014-04-18")].iloc[0]
+        fig.add_annotation(
+            x=polar["period"],
+            y=polar["storage_draw_bcf"],
+            text="2014 Polar Vortex hangover",
+            showarrow=True,
+            arrowhead=2,
+            ay=-45,
+            bgcolor="rgba(255,255,255,0.9)",
+        )
+    fig.update_layout(
+        title="NOAA HDD versus weekly storage draws",
+        template="plotly_white",
+        height=420,
+        margin=dict(l=20, r=20, t=60, b=20),
+        legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="left", x=0),
+    )
+    fig.update_yaxes(title_text="Storage draw (Bcf)", secondary_y=False)
+    fig.update_yaxes(title_text="Heating degree days", secondary_y=True)
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def hdd_scatter_chart(merged_df: pd.DataFrame) -> str:
+    plot_df = merged_df.dropna(subset=["hdd_anomaly", "weekly_change_bcf"]).copy()
+    plot_df["storage_draw_bcf"] = -plot_df["weekly_change_bcf"]
+    x = plot_df["hdd_anomaly"].to_numpy(dtype=float)
+    y = plot_df["storage_draw_bcf"].to_numpy(dtype=float)
+    slope, intercept = np.polyfit(x, y, 1) if len(plot_df) >= 2 else (0.0, float(np.nanmean(y)))
+    line_x = np.linspace(np.nanmin(x), np.nanmax(x), 200) if len(plot_df) >= 2 else x
+    line_y = slope * line_x + intercept if len(plot_df) >= 2 else np.repeat(intercept, len(line_x))
+    colors = np.where(plot_df["extreme_hdd_week"], "#f59e0b", "#64748b")
+    sizes = np.where(plot_df["extreme_storage_week"], 12, 8)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=plot_df["hdd_anomaly"],
+            y=plot_df["storage_draw_bcf"],
+            mode="markers",
+            marker=dict(color=colors, size=sizes, line=dict(color="#ffffff", width=0.5)),
+            text=plot_df["period"].dt.strftime("%Y-%m-%d"),
+            name="Weekly observations",
+            hovertemplate="Week %{text}<br>HDD anomaly %{x:+.0f}<br>Storage draw %{y:+.0f} Bcf<extra></extra>",
+        )
+    )
+    if len(plot_df) >= 2:
+        fig.add_trace(
+            go.Scatter(
+                x=line_x,
+                y=line_y,
+                mode="lines",
+                line=dict(color="#0f766e", width=3, dash="dash"),
+                name="Linear fit",
+            )
+        )
+    fig.update_layout(
+        title="HDD anomaly versus storage draw",
+        template="plotly_white",
+        height=420,
+        margin=dict(l=20, r=20, t=60, b=20),
+        xaxis_title="HDD anomaly",
+        yaxis_title="Storage draw (Bcf)",
+        legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="left", x=0),
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def fit_gpd_tail_metrics(
+    values: pd.Series,
+    threshold_quantile: float = 0.90,
+    return_years: int = 50,
+    bootstrap_samples: int = 150,
+) -> dict[str, float]:
+    clean = pd.Series(values).dropna().astype(float)
+    if len(clean) < 80:
+        return {}
+    threshold = float(clean.quantile(threshold_quantile))
+    tail = clean[clean > threshold]
+    exceedances = tail - threshold
+    if len(exceedances) < 12:
+        return {}
+
+    shape, _, scale = genpareto.fit(exceedances, floc=0)
+    exceedance_rate = len(exceedances) / len(clean)
+    target_probability = 1 / (52 * return_years)
+    if abs(shape) < 1e-6:
+        return_level = threshold + scale * np.log(exceedance_rate / target_probability)
+    else:
+        return_level = threshold + (scale / shape) * ((exceedance_rate / target_probability) ** shape - 1)
+
+    rng = np.random.default_rng(42)
+    shape_samples: list[float] = []
+    return_level_samples: list[float] = []
+    values_array = clean.to_numpy(dtype=float)
+    for _ in range(bootstrap_samples):
+        sample = pd.Series(rng.choice(values_array, size=len(values_array), replace=True))
+        sample_threshold = float(sample.quantile(threshold_quantile))
+        sample_tail = sample[sample > sample_threshold]
+        sample_exceedances = sample_tail - sample_threshold
+        if len(sample_exceedances) < 12:
+            continue
+        try:
+            sample_shape, _, sample_scale = genpareto.fit(sample_exceedances, floc=0)
+        except Exception:
+            continue
+        sample_rate = len(sample_exceedances) / len(sample)
+        if abs(sample_shape) < 1e-6:
+            sample_return_level = sample_threshold + sample_scale * np.log(sample_rate / target_probability)
+        else:
+            sample_return_level = sample_threshold + (sample_scale / sample_shape) * ((sample_rate / target_probability) ** sample_shape - 1)
+        shape_samples.append(float(sample_shape))
+        return_level_samples.append(float(sample_return_level))
+
+    shape_array = np.asarray(shape_samples, dtype=float)
+    return_level_array = np.asarray(return_level_samples, dtype=float)
+    return {
+        "n_obs": float(len(clean)),
+        "n_exceedances": float(len(exceedances)),
+        "threshold": float(threshold),
+        "shape": float(shape),
+        "scale": float(scale),
+        "return_level_50y": float(return_level),
+        "shape_se": float(np.nanstd(shape_array, ddof=1)) if len(shape_array) > 1 else np.nan,
+        "shape_ci_low": float(np.nanpercentile(shape_array, 5)) if len(shape_array) else np.nan,
+        "shape_ci_high": float(np.nanpercentile(shape_array, 95)) if len(shape_array) else np.nan,
+        "return_level_ci_low": float(np.nanpercentile(return_level_array, 5)) if len(return_level_array) else np.nan,
+        "return_level_ci_high": float(np.nanpercentile(return_level_array, 95)) if len(return_level_array) else np.nan,
+    }
+
+
+def conditional_hdd_tail_frame(merged_df: pd.DataFrame) -> pd.DataFrame:
+    plot_df = merged_df.dropna(subset=["weekly_change_bcf"]).copy()
+    plot_df["storage_draw_bcf"] = -plot_df["weekly_change_bcf"]
+    results: list[dict[str, float | str]] = []
+    region_specs = [
+        ("East HDD proxy", "east_hdd_anomaly"),
+        ("Midwest HDD proxy", "midwest_hdd_anomaly"),
+    ]
+    tercile_labels = ["Low", "Medium", "High"]
+    for region_label, anomaly_col in region_specs:
+        if anomaly_col not in plot_df.columns or not plot_df[anomaly_col].notna().any():
+            continue
+        sample = plot_df.dropna(subset=[anomaly_col, "storage_draw_bcf"]).copy()
+        sample["intensity"] = pd.qcut(sample[anomaly_col], q=3, labels=tercile_labels, duplicates="drop")
+        for intensity in sample["intensity"].dropna().unique():
+            subset = sample.loc[sample["intensity"] == intensity, "storage_draw_bcf"]
+            metrics = fit_gpd_tail_metrics(subset)
+            if not metrics:
+                continue
+            metrics["region"] = region_label
+            metrics["intensity"] = str(intensity)
+            results.append(metrics)
+    return pd.DataFrame(results)
+
+
+def conditional_return_level_chart(cond_df: pd.DataFrame) -> str:
+    fig = go.Figure()
+    tercile_order = ["Low", "Medium", "High"]
+    palette = {"East HDD proxy": "#0f766e", "Midwest HDD proxy": "#1d4ed8"}
+    for region in cond_df["region"].dropna().unique():
+        region_df = cond_df[cond_df["region"] == region].copy()
+        region_df["intensity"] = pd.Categorical(region_df["intensity"], categories=tercile_order, ordered=True)
+        region_df = region_df.sort_values("intensity")
+        errors_plus = region_df["return_level_ci_high"] - region_df["return_level_50y"]
+        errors_minus = region_df["return_level_50y"] - region_df["return_level_ci_low"]
+        fig.add_trace(
+            go.Scatter(
+                x=region_df["intensity"],
+                y=region_df["return_level_50y"],
+                mode="lines+markers",
+                name=region,
+                line=dict(color=palette.get(region, "#7c3aed"), width=3),
+                marker=dict(size=10),
+                error_y=dict(
+                    type="data",
+                    array=errors_plus.fillna(0).to_numpy(dtype=float),
+                    arrayminus=errors_minus.fillna(0).to_numpy(dtype=float),
+                    thickness=1.2,
+                    width=4,
+                ),
+            )
+        )
+    fig.update_layout(
+        title="Conditional return level plot: 1-in-50-year storage draw by HDD intensity",
+        template="plotly_white",
+        height=420,
+        margin=dict(l=20, r=20, t=60, b=20),
+        yaxis_title="1-in-50-year storage draw (Bcf)",
+        legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="left", x=0),
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def shape_wald_test_table(cond_df: pd.DataFrame) -> tuple[str, str]:
+    rows = []
+    takeaways = []
+    for region in cond_df["region"].dropna().unique():
+        region_df = cond_df[cond_df["region"] == region].set_index("intensity")
+        if "Low" not in region_df.index or "High" not in region_df.index:
+            continue
+        low = region_df.loc["Low"]
+        high = region_df.loc["High"]
+        denominator = np.sqrt((low["shape_se"] ** 2) + (high["shape_se"] ** 2))
+        z_stat = (high["shape"] - low["shape"]) / denominator if denominator and np.isfinite(denominator) else np.nan
+        p_value = float(2 * norm.sf(abs(z_stat))) if np.isfinite(z_stat) else np.nan
+        reject = bool(np.isfinite(p_value) and p_value < 0.05)
+        rows.append(
+            f"<tr><td>{region}</td><td>{low['shape']:.2f}</td><td>{high['shape']:.2f}</td><td>{z_stat:.2f}</td><td>{p_value:.4f}</td><td>{'Yes' if reject else 'No'}</td></tr>"
+        )
+        takeaways.append(
+            f"{region}: {'reject' if reject else 'do not reject'} H0 that xi_low equals xi_high (p={p_value:.4f})."
+        )
+    return "".join(rows), " ".join(takeaways)
+
+
+def ccf_frame(merged_df: pd.DataFrame, column: str, max_lag: int = 6) -> pd.DataFrame:
+    sample = merged_df.dropna(subset=[column, "weekly_change_bcf"]).copy()
+    sample["storage_draw_bcf"] = -sample["weekly_change_bcf"]
+    rows = []
+    for lag in range(-max_lag, max_lag + 1):
+        if lag >= 0:
+            corr = sample[column].shift(lag).corr(sample["storage_draw_bcf"])
+        else:
+            corr = sample[column].corr(sample["storage_draw_bcf"].shift(-lag))
+        rows.append({"lag": lag, "correlation": float(corr) if pd.notna(corr) else np.nan})
+    return pd.DataFrame(rows)
+
+
+def ccf_chart(merged_df: pd.DataFrame) -> str:
+    fig = go.Figure()
+    specs = [
+        ("US HDD anomaly", "hdd_anomaly", "#0f766e"),
+        ("East HDD proxy anomaly", "east_hdd_anomaly", "#1d4ed8"),
+        ("Midwest HDD proxy anomaly", "midwest_hdd_anomaly", "#b45309"),
+    ]
+    for label, column, color in specs:
+        if column not in merged_df.columns or not merged_df[column].notna().any():
+            continue
+        frame = ccf_frame(merged_df, column, max_lag=6)
+        fig.add_trace(
+            go.Scatter(
+                x=frame["lag"],
+                y=frame["correlation"],
+                mode="lines+markers",
+                name=label,
+                line=dict(color=color, width=3),
+                marker=dict(size=7),
+            )
+        )
+    fig.add_vline(x=1, line_color="#111827", line_dash="dot", line_width=1.5)
+    fig.update_layout(
+        title="Cross-correlation: HDD leads/lags storage draws",
+        template="plotly_white",
+        height=380,
+        margin=dict(l=20, r=20, t=60, b=20),
+        xaxis_title="Lag in weeks (positive means HDD leads storage draw)",
+        yaxis_title="Correlation",
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="left", x=0),
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def hdd_weather_section_html(merged_df: pd.DataFrame) -> str:
+    if merged_df.empty or merged_df["us_hdd_weekly"].notna().sum() == 0:
+        return """
+        <section class="panel">
+          <h2>Weather conditioning</h2>
+          <p>No overlapping NOAA HDD history is available locally yet, so the weather merge section could not be rendered.</p>
+        </section>
+        """
+
+    plot_df = merged_df.dropna(subset=["us_hdd_weekly", "weekly_change_bcf"]).copy()
+    plot_df["storage_draw_bcf"] = -plot_df["weekly_change_bcf"]
+    source_name = merged_df.attrs.get("hdd_source", "NOAA HDD data")
+    matched_rows = int(merged_df.attrs.get("hdd_rows_merged", len(plot_df)))
+    proxy_note = merged_df.attrs.get("regional_proxy_note", "")
+    raw_correlation = float(plot_df["us_hdd_weekly"].corr(plot_df["storage_draw_bcf"]))
+    anomaly_correlation = float(plot_df["hdd_anomaly"].corr(plot_df["storage_draw_bcf"]))
+    cond_df = conditional_hdd_tail_frame(merged_df)
+    shape_rows, shape_takeaway = shape_wald_test_table(cond_df)
+
+    contingency = pd.crosstab(
+        plot_df["extreme_hdd_week"].fillna(False),
+        plot_df["extreme_storage_week"].fillna(False),
+    ).reindex(index=[False, True], columns=[False, True], fill_value=0)
+    chi2, p_value, _, _ = chi2_contingency(contingency.to_numpy())
+    extreme_hdd_total = int(contingency.loc[True].sum())
+    normal_hdd_total = int(contingency.loc[False].sum())
+    p_draw_given_extreme = (
+        contingency.loc[True, True] / extreme_hdd_total if extreme_hdd_total else np.nan
+    )
+    p_draw_given_normal = (
+        contingency.loc[False, True] / normal_hdd_total if normal_hdd_total else np.nan
+    )
+    amplification = (
+        p_draw_given_extreme / p_draw_given_normal
+        if pd.notna(p_draw_given_extreme) and pd.notna(p_draw_given_normal) and p_draw_given_normal > 0
+        else np.nan
+    )
+
+    tercile_labels = ["Low HDD anomaly", "Mid HDD anomaly", "High HDD anomaly"]
+    plot_df["hdd_tercile"] = pd.qcut(plot_df["hdd_anomaly"], q=3, labels=tercile_labels, duplicates="drop")
+    tercile_summary = (
+        plot_df.dropna(subset=["hdd_tercile"])
+        .groupby("hdd_tercile", observed=False)
+        .agg(
+            weeks=("period", "size"),
+            avg_hdd=("us_hdd_weekly", "mean"),
+            avg_anomaly=("hdd_anomaly", "mean"),
+            avg_draw=("storage_draw_bcf", "mean"),
+            extreme_draw_rate=("extreme_storage_week", "mean"),
+        )
+        .reset_index()
+    )
+    tercile_rows = "".join(
+        f"<tr><td>{row.hdd_tercile}</td><td>{row.weeks:.0f}</td><td>{row.avg_hdd:.1f}</td><td>{row.avg_anomaly:+.1f}</td><td>{row.avg_draw:+.1f} Bcf</td><td>{row.extreme_draw_rate * 100:.1f}%</td></tr>"
+        for row in tercile_summary.itertuples()
+    )
+
+    contingency_rows = f"""
+      <tr><td>Extreme HDD week</td><td>{contingency.loc[True, True]:.0f}</td><td>{contingency.loc[True, False]:.0f}</td><td>{extreme_hdd_total:.0f}</td></tr>
+      <tr><td>Normal HDD week</td><td>{contingency.loc[False, True]:.0f}</td><td>{contingency.loc[False, False]:.0f}</td><td>{normal_hdd_total:.0f}</td></tr>
+    """
+
+    return f"""
+    <section class="panel">
+      <h2>Weather conditioning</h2>
+      <p>This section merges NOAA weekly heating degree day data into the EIA storage history using the instructed Friday alignment with a nearest-date tolerance of up to three days. It gives the physical weather context behind large inventory withdrawals and builds.</p>
+      <p class="small"><strong>Local HDD source:</strong> {source_name}. <strong>Matched weekly rows:</strong> {matched_rows}. <strong>Raw HDD versus storage-draw correlation:</strong> {raw_correlation:.2f}. <strong>HDD anomaly versus storage-draw correlation:</strong> {anomaly_correlation:.2f}.</p>
+      <p class="small">The raw HDD relationship stays strong because winter seasonality drives both weather demand and storage withdrawals together. The anomaly relationship is intentionally harder: it removes the normal seasonal pattern and focuses only on unusually cold or warm departures from that baseline. The anomaly now uses a rolling weekly normal: a 30-year average where enough history exists, otherwise a 10-year weekly average.</p>
+      <p class="small">{proxy_note}</p>
+      {hdd_overlay_chart(plot_df)}
+      {hdd_scatter_chart(plot_df)}
+      <div class="analysis-box">
+        <h3>Extreme HDD contingency</h3>
+        <p class="small">Extreme HDD weeks are defined as weeks with HDD anomaly above the 90th percentile. Extreme storage weeks are defined as weeks where the absolute storage change is above the 90th percentile. This is the direct weather-conditioning check from your merge note.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Condition</th><th>Extreme storage week</th><th>Non-extreme storage week</th><th>Total</th></tr></thead>
+            <tbody>{contingency_rows}</tbody>
+          </table>
+        </div>
+        <p class="small"><strong>P(extreme storage | extreme HDD):</strong> {p_draw_given_extreme * 100:.1f}%.
+        <strong>P(extreme storage | normal HDD):</strong> {p_draw_given_normal * 100:.1f}%.
+        <strong>Amplification:</strong> {amplification:.1f}x.
+        <strong>Chi-square p-value:</strong> {p_value:.4f}.</p>
+      </div>
+      <div class="analysis-box">
+        <h3>HDD tercile conditioning</h3>
+        <p class="small">Weeks are categorized into Low, Medium, and High HDD intensity terciles using the historical distribution of the rolling-normal anomaly. This is the conditioning layer for the weather-dependent tail model.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>HDD tercile</th><th>Weeks</th><th>Avg HDD</th><th>Avg anomaly</th><th>Avg storage draw</th><th>Extreme storage rate</th></tr></thead>
+            <tbody>{tercile_rows}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="analysis-box">
+        <h3>Conditional return levels</h3>
+        <p class="small">This plot shows how the 1-in-50-year storage draw changes as the weather regime moves from a mild tercile to a severe tercile. If the severe-cold line sits materially above the mild line, the storage tail is weather-dependent rather than static.</p>
+        {conditional_return_level_chart(cond_df) if not cond_df.empty else ""}
+      </div>
+      <div class="analysis-box">
+        <h3>Methodology: lead-lag check</h3>
+        <p class="small">Positive lags mean HDD leads the storage report. The lag-1 point is the direct check for whether last week's NOAA weather shock maps into this week's EIA storage draw because of reporting timing.</p>
+        {ccf_chart(merged_df)}
+      </div>
+      <div class="analysis-box">
+        <h3>Shape-parameter test</h3>
+        <p class="small">A Wald-style test compares the fitted GPD shape parameter in the Low and High HDD terciles. The null hypothesis is <strong>H0: xi_low = xi_high</strong>. Rejecting that null would support the claim that extreme weather changes not just the level of risk, but the shape of the storage-draw tail itself.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Region</th><th>xi low</th><th>xi high</th><th>Wald z</th><th>p-value</th><th>Reject H0 at 5%</th></tr></thead>
+            <tbody>{shape_rows}</tbody>
+          </table>
+        </div>
+        <p class="small">{shape_takeaway}</p>
+      </div>
+    </section>
+    """
+
+
+def sentiment_section_html(
+    sentiment_df: pd.DataFrame,
+    market_close: pd.DataFrame,
+    inventory_df: pd.DataFrame,
+    evt_inventory_df: pd.DataFrame,
+) -> str:
     if sentiment_df.empty:
         return """
         <section class="panel">
@@ -575,6 +1006,7 @@ def sentiment_section_html(sentiment_df: pd.DataFrame, market_close: pd.DataFram
         <tbody>{rows}</tbody>
       </table>
       </div>
+      {extreme_event_analysis_html(evt_inventory_df)}
     </section>
     """
 
@@ -627,6 +1059,20 @@ def inventory_signal_probability_html(sentiment_df: pd.DataFrame, market_close: 
     )
     grouped["joint_probability_pct"] = grouped["two_sigma_spikes"] / total_events * 100
     grouped["conditional_probability_pct"] = grouped["two_sigma_spikes"] / grouped["events"] * 100
+    grouped["conditional_probability_ci_pct"] = grouped.apply(
+        lambda row: wilson_interval(
+            int(row["two_sigma_spikes"]),
+            int(row["events"]),
+        ),
+        axis=1,
+    )
+    grouped["conditional_probability_bootstrap_se_pct"] = grouped.apply(
+        lambda row: bootstrap_binary_standard_error(
+            successes=int(row["two_sigma_spikes"]),
+            total=int(row["events"]),
+        ),
+        axis=1,
+    )
 
     def sort_key(row) -> tuple[int, int]:
         label_order = {"negative": 0, "neutral": 1, "positive": 2}
@@ -646,6 +1092,8 @@ def inventory_signal_probability_html(sentiment_df: pd.DataFrame, market_close: 
         f"<td>{row.two_sigma_spikes:.0f}</td>"
         f"<td>{row.joint_probability_pct:.1f}%</td>"
         f"<td>{row.conditional_probability_pct:.1f}%</td>"
+        f"<td>{row.conditional_probability_ci_pct[0]:.1f}% to {row.conditional_probability_ci_pct[1]:.1f}%</td>"
+        f"<td>{row.conditional_probability_bootstrap_se_pct:.1f}%</td>"
         f"<td>{row.avg_forward_1w_return_pct:+.1f}%</td>"
         f"<td>{row.avg_two_sigma_threshold_pct:.1f}%</td>"
         "</tr>"
@@ -661,7 +1109,9 @@ def inventory_signal_probability_html(sentiment_df: pd.DataFrame, market_close: 
         focus_text = (
             f" For the key signal, negative FinBERT sentiment plus an inventory draw produced "
             f"{focus_row['two_sigma_spikes']:.0f} two-sigma upside NG=F spikes from {focus_row['events']:.0f} events, "
-            f"a conditional probability of {focus_row['conditional_probability_pct']:.1f}%."
+            f"a conditional probability of {focus_row['conditional_probability_pct']:.1f}% "
+            f"with a Wilson interval of {focus_row['conditional_probability_ci_pct'][0]:.1f}% to {focus_row['conditional_probability_ci_pct'][1]:.1f}% "
+            f"and bootstrap standard error of {focus_row['conditional_probability_bootstrap_se_pct']:.1f}%."
         )
 
     return f"""
@@ -671,12 +1121,213 @@ def inventory_signal_probability_html(sentiment_df: pd.DataFrame, market_close: 
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>FinBERT label</th><th>Inventory condition</th><th>Events</th><th>2-sigma spikes</th><th>Joint probability</th><th>P(spike | signal)</th><th>Avg next-week NG=F return</th><th>Avg 2-sigma threshold</th></tr>
+              <tr><th>FinBERT label</th><th>Inventory condition</th><th>Events</th><th>2-sigma spikes</th><th>Joint probability</th><th>P(spike | signal)</th><th>Wilson 90% CI</th><th>Bootstrap SE</th><th>Avg next-week NG=F return</th><th>Avg 2-sigma threshold</th></tr>
             </thead>
             <tbody>{rows}</tbody>
           </table>
         </div>
       </div>
+    """
+
+
+def format_return_period(probability: float) -> str:
+    if not np.isfinite(probability) or probability <= 0:
+        return "not observed in sample"
+    years = 1 / (probability * 52)
+    if years < 1:
+        weeks = 1 / probability
+        return f"1-in-{weeks:.0f} weeks"
+    return f"1-in-{years:.1f} years"
+
+
+def wilson_interval(successes: int, total: int, confidence_level: float = 0.90) -> tuple[float, float]:
+    if total <= 0:
+        return (np.nan, np.nan)
+    z = norm.ppf(0.5 + confidence_level / 2)
+    phat = successes / total
+    denominator = 1 + z**2 / total
+    center = (phat + z**2 / (2 * total)) / denominator
+    margin = z * np.sqrt((phat * (1 - phat) + z**2 / (4 * total)) / total) / denominator
+    return (max(0.0, (center - margin) * 100), min(100.0, (center + margin) * 100))
+
+
+def bootstrap_binary_standard_error(successes: int, total: int, bootstrap_samples: int = 200) -> float:
+    if total <= 1:
+        return np.nan
+    rng = np.random.default_rng(42)
+    series = np.array([1] * successes + [0] * (total - successes), dtype=float)
+    estimates = []
+    for _ in range(bootstrap_samples):
+        draw = rng.choice(series, size=total, replace=True)
+        estimates.append(draw.mean() * 100)
+    return float(np.std(estimates, ddof=1))
+
+
+def bootstrap_evt_uncertainty(
+    shocks: pd.Series,
+    selected_shock: float,
+    x_values: np.ndarray,
+    threshold_quantile: float = 0.90,
+    bootstrap_samples: int = 250,
+) -> dict[str, np.ndarray | float]:
+    rng = np.random.default_rng(42)
+    shock_values = np.asarray(shocks.dropna(), dtype=float)
+    shape_samples: list[float] = []
+    probability_samples: list[float] = []
+    density_samples: list[np.ndarray] = []
+
+    for _ in range(bootstrap_samples):
+        sample = rng.choice(shock_values, size=len(shock_values), replace=True)
+        sample_threshold = float(np.quantile(sample, threshold_quantile))
+        sample_tail = sample[sample > sample_threshold]
+        if len(sample_tail) < 10:
+            continue
+        sample_exceedances = sample_tail - sample_threshold
+        try:
+            sample_shape, _, sample_scale = genpareto.fit(sample_exceedances, floc=0)
+        except Exception:
+            continue
+        sample_tail_probability = len(sample_tail) / len(sample)
+        if selected_shock <= sample_threshold:
+            sample_probability = float(np.mean(sample >= selected_shock))
+        else:
+            sample_probability = float(
+                sample_tail_probability * genpareto.sf(selected_shock - sample_threshold, sample_shape, loc=0, scale=sample_scale)
+            )
+        density = genpareto.pdf(np.clip(x_values - sample_threshold, a_min=0, a_max=None), sample_shape, loc=0, scale=sample_scale)
+        density = np.where(x_values >= sample_threshold, density, np.nan)
+        shape_samples.append(float(sample_shape))
+        probability_samples.append(sample_probability)
+        density_samples.append(density)
+
+    shape_array = np.asarray(shape_samples, dtype=float)
+    probability_array = np.asarray(probability_samples, dtype=float)
+    density_matrix = np.asarray(density_samples, dtype=float)
+    return {
+        "shape_lower": float(np.nanpercentile(shape_array, 5)) if len(shape_array) else np.nan,
+        "shape_upper": float(np.nanpercentile(shape_array, 95)) if len(shape_array) else np.nan,
+        "probability_lower": float(np.nanpercentile(probability_array, 5)) if len(probability_array) else np.nan,
+        "probability_upper": float(np.nanpercentile(probability_array, 95)) if len(probability_array) else np.nan,
+        "density_lower": np.nanpercentile(density_matrix, 5, axis=0) if density_matrix.size else np.full_like(x_values, np.nan),
+        "density_upper": np.nanpercentile(density_matrix, 95, axis=0) if density_matrix.size else np.full_like(x_values, np.nan),
+    }
+
+
+def extreme_event_analysis_html(inventory_df: pd.DataFrame) -> str:
+    decomp = inventory_decomposition(inventory_df)
+    residual = pd.Series(decomp.resid, index=decomp.observed.index).dropna()
+    shocks = residual.abs().dropna()
+    if len(shocks) < 100:
+        return ""
+
+    threshold = float(shocks.quantile(0.90))
+    tail = shocks[shocks > threshold]
+    exceedances = tail - threshold
+    if len(exceedances) < 10:
+        return ""
+
+    shape, _, scale = genpareto.fit(exceedances, floc=0)
+    selected_date = shocks.idxmax()
+    selected_shock = float(shocks.loc[selected_date])
+    selected_signed = float(residual.loc[selected_date])
+    residual_std = float(residual.std())
+    selected_z = selected_shock / residual_std if residual_std > 0 else np.nan
+
+    standard_probability = float(2 * norm.sf(selected_z)) if np.isfinite(selected_z) else np.nan
+    tail_probability = len(tail) / len(shocks)
+    if selected_shock <= threshold:
+        gpd_probability = float((shocks >= selected_shock).mean())
+    else:
+        gpd_probability = float(tail_probability * genpareto.sf(selected_shock - threshold, shape, loc=0, scale=scale))
+
+    x_values = np.linspace(threshold, max(float(tail.max()), selected_shock) * 1.05, 180)
+    folded_normal_tail_probability = max(float(2 * norm.sf(threshold / residual_std)), 1e-12) if residual_std > 0 else np.nan
+    gpd_density = genpareto.pdf(x_values - threshold, shape, loc=0, scale=scale)
+    evt_bootstrap = bootstrap_evt_uncertainty(shocks, selected_shock, x_values)
+    normal_density = (
+        2 * norm.pdf(x_values, loc=0, scale=residual_std) / folded_normal_tail_probability
+        if residual_std > 0 and np.isfinite(folded_normal_tail_probability)
+        else np.full_like(x_values, np.nan)
+    )
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Histogram(
+            x=tail,
+            histnorm="probability density",
+            nbinsx=18,
+            marker_color="#d97706",
+            opacity=0.55,
+            name="Observed tail shocks",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=np.concatenate([x_values, x_values[::-1]]),
+            y=np.concatenate([evt_bootstrap["density_upper"], evt_bootstrap["density_lower"][::-1]]),
+            fill="toself",
+            fillcolor="rgba(124,45,18,0.14)",
+            line=dict(color="rgba(124,45,18,0)"),
+            hoverinfo="skip",
+            name="GPD 90% bootstrap band",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=gpd_density,
+            mode="lines",
+            line=dict(color="#7c2d12", width=3),
+            name="Fitted GPD tail",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=normal_density,
+            mode="lines",
+            line=dict(color="#1d4ed8", width=2, dash="dash"),
+            name="Normal tail expectation",
+        )
+    )
+    fig.add_vline(x=selected_shock, line_color="#111827", line_width=2, line_dash="dot")
+    fig.add_vline(x=threshold, line_color="#92400e", line_width=2, line_dash="dash")
+    fig.update_layout(
+        title="Tail fit plot: absolute STL residual shocks",
+        template="plotly_white",
+        height=430,
+        margin=dict(l=20, r=20, t=60, b=20),
+        xaxis_title="Absolute residual shock (Bcf)",
+        yaxis_title="Density",
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="left", x=0),
+        bargap=0.04,
+    )
+
+    standard_period = format_return_period(standard_probability)
+    gpd_period = format_return_period(gpd_probability)
+    gpd_period_lower = format_return_period(float(evt_bootstrap["probability_upper"]))
+    gpd_period_upper = format_return_period(float(evt_bootstrap["probability_lower"]))
+    direction = "positive" if selected_signed >= 0 else "negative"
+    start_period = pd.Timestamp(inventory_df["period"].min()).strftime("%Y-%m-%d")
+    end_period = pd.Timestamp(inventory_df["period"].max()).strftime("%Y-%m-%d")
+    years = (pd.Timestamp(inventory_df["period"].max()) - pd.Timestamp(inventory_df["period"].min())).days / 365.25
+    return f"""
+      <details class="analysis-box" open>
+        <summary><strong>Extreme Event Analysis</strong></summary>
+        <p class="small">This panel is the EVT stress-test layer. It uses the full available weekly EIA inventory history from <strong>{start_period}</strong> to <strong>{end_period}</strong> ({years:.1f} years) only for tail-risk fitting, while the rest of the dashboard remains based on the 10-year working dataset. The orange bars show the empirical tail, the brown curve is the fitted GPD tail, and the dashed blue curve shows what a normal residual model would expect beyond the same tail threshold.</p>
+        {fig.to_html(full_html=False, include_plotlyjs=False)}
+        <p class="small">
+          <strong>Selected full-history stress shock:</strong> {selected_date.strftime('%Y-%m-%d')}, {selected_signed:+.0f} Bcf residual ({direction}), or <strong>{selected_z:.2f} sigma</strong>.
+          <strong>Tail threshold:</strong> {threshold:.0f} Bcf. <strong>GPD shape:</strong> {shape:.2f} with 90% bootstrap interval <strong>{evt_bootstrap["shape_lower"]:.2f} to {evt_bootstrap["shape_upper"]:.2f}</strong>. <strong>GPD scale:</strong> {scale:.1f}.
+        </p>
+        <p class="small">
+          The week ending April 18, 2014, represents one of the most significant statistical dislocations in the history of the US natural gas market. The reason for this massive residual is that the market was experiencing the hangover of the 2013-2014 Polar Vortex, the most severe winter for natural gas demand in over a decade.
+        </p>
+        <p class="small">
+          <strong>GPD-adjusted probability:</strong> the standard normal model implies this shock is roughly <strong>{standard_period}</strong>;
+          the fitted GPD tail implies roughly <strong>{gpd_period}</strong>, with a 90% bootstrap return-period band of <strong>{gpd_period_lower}</strong> to <strong>{gpd_period_upper}</strong>. The gap is the fat-tail evidence: large storage shocks occur more often than a Gaussian model would suggest.
+        </p>
+      </details>
     """
 
 
@@ -911,7 +1562,14 @@ def regional_table(release: dict) -> str:
     """
 
 
-def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, sentiment_df: pd.DataFrame) -> str:
+def html_page(
+    df: pd.DataFrame,
+    release: dict,
+    market_close: pd.DataFrame,
+    sentiment_df: pd.DataFrame,
+    evt_inventory_df: pd.DataFrame,
+    weather_hdd_df: pd.DataFrame,
+) -> str:
     summary = summarize_inventory(df)
     refreshed = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return f"""<!doctype html>
@@ -1091,13 +1749,15 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, senti
       {residual_regime_monitor_html(df)}
     </section>
 
+    {hdd_weather_section_html(weather_hdd_df)}
+
     <section class="panel">
       <h2>Regional storage table</h2>
       <p>This table summarizes the latest weekly storage release by reporting region. All storage values are shown in billion cubic feet.</p>
       {regional_table(release)}
     </section>
 
-    {sentiment_section_html(sentiment_df, market_close)}
+    {sentiment_section_html(sentiment_df, market_close, df, evt_inventory_df)}
 
     <section class="panel">
       <h2>Market analysis</h2>
@@ -1113,11 +1773,18 @@ def html_page(df: pd.DataFrame, release: dict, market_close: pd.DataFrame, senti
 def main() -> int:
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     df = load_inventory_data(BASE_DIR)
+    full_inventory_df = load_full_inventory_data(BASE_DIR)
     release = latest_release_payload(df)
+    hdd_df = load_hdd_data(BASE_DIR, prefer_full_history=True)
+    weather_hdd_df = merge_inventory_hdd(full_inventory_df, hdd_df)
     market_tickers = list(dict.fromkeys(DEFAULT_TICKERS + MONTHLY_RETURN_TICKERS))
     market_close = fetch_market_prices(market_tickers, start="2017-01-01")
     sentiment_df = load_sentiment_events()
-    REPORT_PATH.write_text(html_page(df, release, market_close, sentiment_df), encoding="utf-8")
+    evt_inventory_df = load_evt_inventory_history(df)
+    REPORT_PATH.write_text(
+        html_page(df, release, market_close, sentiment_df, evt_inventory_df, weather_hdd_df),
+        encoding="utf-8",
+    )
     print(f"Wrote {REPORT_PATH}")
     return 0
 

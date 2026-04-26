@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 import numpy as np
 import pandas as pd
+import requests
 from scipy.optimize import minimize
 from scipy.stats import genpareto
 import yfinance as yf
@@ -14,6 +16,10 @@ from statsmodels.tsa.stattools import acf, adfuller, pacf
 
 
 INVENTORY_CSV = "eia_ng_total_inventory_last_10_years.csv"
+FULL_HISTORY_INVENTORY_CSV = "eia_ng_total_inventory_full_history.csv"
+NOAA_HDD_CSV = Path("HDD data") / "noaa_weekly_hdd.csv"
+NOAA_HDD_FULL_HISTORY_CSV = Path("HDD data") / "noaa_weekly_hdd_full_history.csv"
+NOAA_HDD_EXAMPLE_CSV = Path("HDD data") / "example_noaa_hdd_data.csv"
 DEFAULT_TICKERS = ["NG=F", "RRC", "AR", "EQT", "CNX", "UNG", "USO", "FTI"]
 PORTFOLIO_TICKERS = ["RRC", "AR", "EQT", "CNX", "UNG", "USO"]
 
@@ -51,6 +57,219 @@ def load_inventory_data(base_dir: Path) -> pd.DataFrame:
     df.attrs["adf_inventory_level"] = adf_test_summary(df["value_bcf"], "Inventory level")
     df.attrs["adf_weekly_change"] = adf_test_summary(df["value_bcf"].diff(), "Weekly change")
     return df
+
+
+def load_full_inventory_data(base_dir: Path) -> pd.DataFrame:
+    path = base_dir / FULL_HISTORY_INVENTORY_CSV
+    if not path.exists():
+        return load_inventory_data(base_dir)
+    df = pd.read_csv(path, parse_dates=["period"])
+    df = df.sort_values("period").reset_index(drop=True)
+    df["week_of_year"] = df["period"].dt.isocalendar().week.astype(int)
+    df["year"] = df["period"].dt.year
+    df["inventory_52w_avg"] = df["value_bcf"].rolling(52).mean()
+    df["inventory_52w_std"] = df["value_bcf"].rolling(52).std()
+    df.attrs["adf_inventory_level"] = adf_test_summary(df["value_bcf"], "Inventory level")
+    df.attrs["adf_weekly_change"] = adf_test_summary(df["value_bcf"].diff(), "Weekly change")
+    return df
+
+
+def _parse_noaa_section_rows(text: str, section_marker: str) -> dict[str, tuple[float, float, float]]:
+    pattern = re.compile(r"^\s*([A-Z][A-Z\s]+?)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)")
+    rows: dict[str, tuple[float, float, float]] = {}
+    in_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        upper = line.upper().strip()
+        if section_marker in upper:
+            in_section = True
+            continue
+        if in_section and upper.endswith("HEATING WEIGHTED") and section_marker not in upper:
+            break
+        if not in_section:
+            continue
+        match = pattern.match(line)
+        if not match:
+            continue
+        label = match.group(1).strip()
+        rows[label] = (
+            float(match.group(2)),
+            float(match.group(3)),
+            float(match.group(4)),
+        )
+    return rows
+
+
+def _mean_available(values: list[float]) -> float:
+    clean = [float(value) for value in values if pd.notna(value)]
+    return float(np.mean(clean)) if clean else np.nan
+
+
+def _add_rolling_hdd_normals(df: pd.DataFrame) -> pd.DataFrame:
+    enriched = df.copy().sort_values("date").reset_index(drop=True)
+    enriched["week_of_year"] = enriched["date"].dt.isocalendar().week.astype(int)
+    hdd_columns = [
+        column
+        for column in ["us_hdd_weekly", "east_hdd_weekly", "midwest_hdd_weekly"]
+        if column in enriched.columns
+    ]
+    for column in hdd_columns:
+        for years in [10, 30]:
+            normal_col = f"{column}_normal_{years}y"
+            anomaly_col = f"{column}_anomaly_{years}y"
+            normal_series = (
+                enriched.groupby("week_of_year", group_keys=False)[column]
+                .transform(lambda series, win=years: series.shift(1).rolling(win, min_periods=max(5, min(win, 10))).mean())
+            )
+            enriched[normal_col] = normal_series
+            enriched[anomaly_col] = enriched[column] - enriched[normal_col]
+
+        fallback_normal = enriched[f"{column}_normal_30y"].combine_first(enriched[f"{column}_normal_10y"])
+        fallback_anomaly = enriched[f"{column}_anomaly_30y"].combine_first(enriched[f"{column}_anomaly_10y"])
+        prefix = column.replace("_weekly", "")
+        enriched[f"{prefix}_normal"] = fallback_normal
+        enriched[f"{prefix}_anomaly"] = fallback_anomaly
+
+    if "us_hdd_weekly" in enriched.columns:
+        enriched["hdd_normal"] = enriched["us_hdd_normal"]
+        enriched["hdd_anomaly"] = enriched["us_hdd_anomaly"]
+    threshold_source = enriched["hdd_anomaly"] if "hdd_anomaly" in enriched.columns else pd.Series(dtype=float)
+    threshold = float(threshold_source.quantile(0.90)) if threshold_source.notna().any() else np.nan
+    enriched["extreme_hdd_week"] = threshold_source > threshold
+    return enriched
+
+
+def fetch_noaa_hdd_history(
+    periods: pd.Series | list[pd.Timestamp],
+    timeout: int = 20,
+) -> pd.DataFrame:
+    dates = pd.to_datetime(pd.Series(periods)).dropna().sort_values().drop_duplicates()
+    records: list[dict[str, float | str]] = []
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Codex NOAA HDD merger nandyal@hotmail.com"})
+    section_candidates = [
+        "UTILITY GAS CUSTOMER HEATING WEIGHTED",
+        "POPULATION-WEIGHTED STATE,REGIONAL,AND NATIONAL AVERAGES",
+    ]
+
+    for period in dates:
+        response = None
+        actual_date = None
+        for offset in [0, -1, 1, -2, 2, -3, 3]:
+            candidate = period + pd.Timedelta(days=offset)
+            date_str = candidate.strftime("%Y%m%d")
+            url = (
+                "https://ftp.cpc.ncep.noaa.gov/htdocs/degree_days/weighted/"
+                f"legacy_files/heating/statesCONUS/{candidate.year}/weekly-{date_str}.txt"
+            )
+            candidate_response = session.get(url, timeout=timeout)
+            if candidate_response.status_code == 200:
+                response = candidate_response
+                actual_date = candidate
+                break
+        if response is None:
+            raise ValueError(f"NOAA HDD file not found within +/-3 days of {period.strftime('%Y-%m-%d')}.")
+        rows = {}
+        selected_section = ""
+        for section_marker in section_candidates:
+            candidate_rows = _parse_noaa_section_rows(response.text, section_marker=section_marker)
+            if "UNITED STATES" in candidate_rows and len(candidate_rows) >= 5:
+                rows = candidate_rows
+                selected_section = section_marker
+                break
+        if "UNITED STATES" not in rows or actual_date is None:
+            raise ValueError(f"Could not parse national HDD row from NOAA file near {period.strftime('%Y-%m-%d')}.")
+        new_england = rows.get("NEW ENGLAND", (np.nan, np.nan, np.nan))
+        middle_atlantic = rows.get("MIDDLE ATLANTIC", (np.nan, np.nan, np.nan))
+        east_n_central = rows.get("E N CENTRAL", (np.nan, np.nan, np.nan))
+        west_n_central = rows.get("W N CENTRAL", (np.nan, np.nan, np.nan))
+        us_row = rows["UNITED STATES"]
+        records.append(
+            {
+                "date": period.normalize(),
+                "week_ending": period.strftime("%Y%m%d"),
+                "noaa_file_date": actual_date.strftime("%Y%m%d"),
+                "us_hdd_weekly": float(us_row[0]),
+                "hdd_deviation_from_normal": float(us_row[1]),
+                "hdd_deviation_from_last_year": float(us_row[2]),
+                "new_england_hdd_weekly": float(new_england[0]),
+                "middle_atlantic_hdd_weekly": float(middle_atlantic[0]),
+                "east_n_central_hdd_weekly": float(east_n_central[0]),
+                "west_n_central_hdd_weekly": float(west_n_central[0]),
+                "east_hdd_weekly": _mean_available([new_england[0], middle_atlantic[0]]),
+                "midwest_hdd_weekly": _mean_available([east_n_central[0], west_n_central[0]]),
+                "east_hdd_deviation_from_normal": _mean_available([new_england[1], middle_atlantic[1]]),
+                "midwest_hdd_deviation_from_normal": _mean_available([east_n_central[1], west_n_central[1]]),
+                "noaa_section_used": selected_section,
+            }
+        )
+
+    df = _add_rolling_hdd_normals(pd.DataFrame(records))
+    df.attrs["source"] = "NOAA CPC weekly heating degree day archive"
+    df.attrs["regional_proxy_note"] = (
+        "East HDD is proxied by the mean of New England and Middle Atlantic utility-gas-weighted HDD. "
+        "Midwest HDD is proxied by the mean of East North Central and West North Central utility-gas-weighted HDD."
+    )
+    return df
+
+
+def load_hdd_data(base_dir: Path, prefer_full_history: bool = True) -> pd.DataFrame:
+    candidate_paths = [NOAA_HDD_FULL_HISTORY_CSV, NOAA_HDD_CSV, NOAA_HDD_EXAMPLE_CSV] if prefer_full_history else [NOAA_HDD_CSV, NOAA_HDD_FULL_HISTORY_CSV, NOAA_HDD_EXAMPLE_CSV]
+    for relative_path in candidate_paths:
+        path = base_dir / relative_path
+        if not path.exists():
+            continue
+        df = pd.read_csv(path, parse_dates=["date"])
+        if "week_ending" not in df.columns:
+            df["week_ending"] = df["date"].dt.strftime("%Y%m%d")
+        df = _add_rolling_hdd_normals(df)
+        df.attrs["source"] = path.name
+        df.attrs["regional_proxy_note"] = (
+            "East HDD is proxied by the mean of New England and Middle Atlantic utility-gas-weighted HDD. "
+            "Midwest HDD is proxied by the mean of East North Central and West North Central utility-gas-weighted HDD."
+        )
+        return df
+    return pd.DataFrame()
+
+
+def merge_inventory_hdd(
+    inventory_df: pd.DataFrame,
+    hdd_df: pd.DataFrame,
+    tolerance_days: int = 3,
+) -> pd.DataFrame:
+    if inventory_df.empty or hdd_df.empty:
+        return pd.DataFrame()
+
+    inventory = inventory_df.copy().sort_values("period")
+    inventory["date"] = pd.to_datetime(inventory["period"]).dt.normalize()
+    inventory["weekly_change_bcf"] = inventory["value_bcf"].diff()
+
+    hdd = hdd_df.copy().sort_values("date")
+    hdd["date"] = pd.to_datetime(hdd["date"]).dt.normalize()
+
+    merged = pd.merge_asof(
+        inventory,
+        hdd,
+        on="date",
+        direction="nearest",
+        tolerance=pd.Timedelta(days=tolerance_days),
+    )
+    merged["week_of_year"] = merged["date"].dt.isocalendar().week.astype(int)
+    if "hdd_anomaly" not in merged.columns or not merged["hdd_anomaly"].notna().any():
+        seasonal_avg = merged.groupby("week_of_year")["us_hdd_weekly"].transform("mean")
+        merged["hdd_anomaly"] = merged["us_hdd_weekly"] - seasonal_avg
+    hdd_threshold = float(merged["hdd_anomaly"].quantile(0.90)) if merged["hdd_anomaly"].notna().any() else np.nan
+    storage_threshold = (
+        float(merged["weekly_change_bcf"].abs().quantile(0.90))
+        if merged["weekly_change_bcf"].notna().any()
+        else np.nan
+    )
+    merged["extreme_hdd_week"] = merged["hdd_anomaly"] > hdd_threshold
+    merged["extreme_storage_week"] = merged["weekly_change_bcf"].abs() > storage_threshold
+    merged.attrs["hdd_source"] = hdd_df.attrs.get("source", "unknown")
+    merged.attrs["hdd_rows_merged"] = int(merged["us_hdd_weekly"].notna().sum())
+    merged.attrs["regional_proxy_note"] = hdd_df.attrs.get("regional_proxy_note", "")
+    return merged
 
 
 def adf_test_summary(series: pd.Series, label: str) -> dict[str, float | str | int]:

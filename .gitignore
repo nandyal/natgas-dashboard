@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.yfcache/
+ng_f_prices_daily.csv
+hdd_storage_correlation_analysis.png
