@@ -1,0 +1,47 @@
+{
+  "coverage_start": "2003-12-26",
+  "coverage_end": "2026-04-24",
+  "row_count": 1162,
+  "mild_shape_xi": -0.1601966069115861,
+  "severe_shape_xi": -1.1443561049032933,
+  "xi_delta_severe_minus_mild": -0.9841594979917072,
+  "summary": [
+    {
+      "n_obs": 153,
+      "n_exceedances": 16,
+      "threshold_bcf": 134.12972260284943,
+      "shape_xi": -0.1601966069115861,
+      "scale_sigma": 94.1687474807771,
+      "mean_draw_risk_bcf": 66.92850803897531,
+      "return_level_10y_bcf": 412.04665400489955,
+      "return_level_50y_bcf": 482.4813491674508,
+      "return_level_100y_bcf": 507.6500287526206,
+      "weather_tercile": "Mild"
+    },
+    {
+      "n_obs": 206,
+      "n_exceedances": 21,
+      "threshold_bcf": 93.61910458825173,
+      "shape_xi": 0.5051915086144685,
+      "scale_sigma": 25.78540637610822,
+      "mean_draw_risk_bcf": 52.101111021078154,
+      "return_level_10y_bcf": 421.9348575701342,
+      "return_level_50y_bcf": 897.9627255827837,
+      "return_level_100y_bcf": 1256.6354855690156,
+      "weather_tercile": "Normal"
+    },
+    {
+      "n_obs": 207,
+      "n_exceedances": 21,
+      "threshold_bcf": 246.2197615035888,
+      "shape_xi": -1.1443561049032933,
+      "scale_sigma": 206.65439745773517,
+      "mean_draw_risk_bcf": 103.10791107407915,
+      "return_level_10y_bcf": 424.8743655005707,
+      "return_level_50y_bcf": 426.4993483826395,
+      "return_level_100y_bcf": 426.6670020593963,
+      "weather_tercile": "Severe"
+    }
+  ],
+  "plot_path": "C:\\Users\\abcna\\Desktop\\Other Coding projects\\Nat gas research\\docs\\conditional_return_levels.png"
+}

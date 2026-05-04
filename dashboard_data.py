@@ -117,22 +117,36 @@ def _add_rolling_hdd_normals(df: pd.DataFrame) -> pd.DataFrame:
         for years in [10, 30]:
             normal_col = f"{column}_normal_{years}y"
             anomaly_col = f"{column}_anomaly_{years}y"
+            std_col = f"{column}_std_{years}y"
+            zscore_col = f"{column}_zscore_{years}y"
             normal_series = (
                 enriched.groupby("week_of_year", group_keys=False)[column]
                 .transform(lambda series, win=years: series.shift(1).rolling(win, min_periods=max(5, min(win, 10))).mean())
             )
+            std_series = (
+                enriched.groupby("week_of_year", group_keys=False)[column]
+                .transform(lambda series, win=years: series.shift(1).rolling(win, min_periods=max(5, min(win, 10))).std())
+            )
             enriched[normal_col] = normal_series
             enriched[anomaly_col] = enriched[column] - enriched[normal_col]
+            enriched[std_col] = std_series
+            enriched[zscore_col] = enriched[anomaly_col] / enriched[std_col].replace(0, np.nan)
 
         fallback_normal = enriched[f"{column}_normal_30y"].combine_first(enriched[f"{column}_normal_10y"])
         fallback_anomaly = enriched[f"{column}_anomaly_30y"].combine_first(enriched[f"{column}_anomaly_10y"])
+        fallback_std = enriched[f"{column}_std_30y"].combine_first(enriched[f"{column}_std_10y"])
+        fallback_zscore = enriched[f"{column}_zscore_30y"].combine_first(enriched[f"{column}_zscore_10y"])
         prefix = column.replace("_weekly", "")
         enriched[f"{prefix}_normal"] = fallback_normal
         enriched[f"{prefix}_anomaly"] = fallback_anomaly
+        enriched[f"{prefix}_std"] = fallback_std
+        enriched[f"{prefix}_zscore"] = fallback_zscore
 
     if "us_hdd_weekly" in enriched.columns:
         enriched["hdd_normal"] = enriched["us_hdd_normal"]
         enriched["hdd_anomaly"] = enriched["us_hdd_anomaly"]
+        enriched["hdd_std"] = enriched["us_hdd_std"]
+        enriched["hdd_zscore"] = enriched["us_hdd_zscore"]
     threshold_source = enriched["hdd_anomaly"] if "hdd_anomaly" in enriched.columns else pd.Series(dtype=float)
     threshold = float(threshold_source.quantile(0.90)) if threshold_source.notna().any() else np.nan
     enriched["extreme_hdd_week"] = threshold_source > threshold

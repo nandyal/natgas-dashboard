@@ -1,0 +1,29 @@
+{
+  "input_csv": "C:\\Users\\abcna\\Desktop\\Other Coding projects\\Nat gas research\\eia_ng_total_inventory_full_history.csv",
+  "coverage_start": "1993-12-31",
+  "coverage_end": "2026-04-24",
+  "stl_period_weeks": 52,
+  "ar_lags": 4,
+  "evt_fit_series": "absolute STL residual shocks",
+  "threshold_bcf": 149.0,
+  "shape_xi": -0.34258549898801893,
+  "scale_sigma": 116.2487265715116,
+  "tail_probability": 0.1019561351511559,
+  "n_observations": 1687,
+  "n_exceedances": 172,
+  "residual_std_bcf": 96.088325490964,
+  "innovation_std_bcf": 34.22355666306386,
+  "innovation_acf_lag1": 0.0005343588245215656,
+  "ljung_box_pvalue_13": 0.48975397406848875,
+  "ljung_box_pvalue_26": 0.2724539242336997,
+  "innovation_threshold_exceedances_gt_149_bcf": 3,
+  "mean_excess_plot": "C:\\Users\\abcna\\Desktop\\Other Coding projects\\Nat gas research\\docs\\evt_mean_excess_plot.png",
+  "tail_fit_plot": "C:\\Users\\abcna\\Desktop\\Other Coding projects\\Nat gas research\\docs\\evt_tail_fit_vs_gaussian.png",
+  "ar_params": {
+    "const": -0.22772432216315946,
+    "resid.L1": 1.232400328200956,
+    "resid.L2": -0.3335733847475529,
+    "resid.L3": 0.02044339410417078,
+    "resid.L4": -0.02038078692348634
+  }
+}
