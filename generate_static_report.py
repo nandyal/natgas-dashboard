@@ -15,6 +15,7 @@ from statsmodels.tsa.stattools import ccf
 from dashboard_data import (
     DEFAULT_TICKERS,
     PORTFOLIO_TICKERS,
+    backtest_outlook_models,
     build_optimized_portfolio,
     build_outlook_summary,
     calendar_return_table,
@@ -32,8 +33,11 @@ from dashboard_data import (
     residual_acf_pacf_table,
     residual_regime_alert,
     rolling_residual_autocorrelation,
+    save_outlook_snapshots,
     seasonal_inventory_profile,
     split_residual_components,
+    summarize_henry_hub_backtest,
+    summarize_inventory_backtest,
     summarize_inventory,
 )
 
@@ -328,6 +332,13 @@ def outlook_section_html(
     except Exception:
         return ""
 
+    save_outlook_snapshots(
+        BASE_DIR,
+        inventory_scenarios,
+        henry_hub_scenarios,
+        pd.Timestamp(inventory_df["period"].max()),
+    )
+
     rows = "".join(
         f"<tr><td>{row.scenario}</td><td>{row.hdd_assumption}</td><td>{row.end_inventory_bcf:,.0f} Bcf</td><td>{row.min_inventory_bcf:,.0f} Bcf</td><td>{row.max_inventory_bcf:,.0f} Bcf</td><td>${row.end_henry_hub_price:.2f}</td><td>${row.avg_henry_hub_price:.2f}</td></tr>"
         for row in summary_rows
@@ -346,6 +357,148 @@ def outlook_section_html(
         <table>
           <thead><tr><th>Scenario</th><th>Weather assumption</th><th>End inventory</th><th>12m minimum</th><th>12m maximum</th><th>End Henry Hub</th><th>Avg Henry Hub</th></tr></thead>
           <tbody>{rows}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
+def forecast_accuracy_section_html(
+    full_inventory_df: pd.DataFrame,
+    weather_hdd_df: pd.DataFrame,
+    market_close: pd.DataFrame,
+) -> str:
+    if weather_hdd_df.empty or "NG=F" not in market_close.columns:
+        return ""
+    try:
+        backtest = backtest_outlook_models(full_inventory_df, weather_hdd_df, market_close)
+        inventory_backtest = backtest["inventory_backtest"]
+        henry_backtest = backtest["henry_backtest"]
+    except Exception:
+        return ""
+    if inventory_backtest.empty and henry_backtest.empty:
+        return ""
+
+    inventory_metrics = summarize_inventory_backtest(inventory_backtest)
+    henry_metrics = summarize_henry_hub_backtest(henry_backtest)
+
+    inv_rows = "".join(
+        f"<tr><td>{row.horizon_weeks} weeks</td><td>{row.mae:,.0f} Bcf</td><td>{row.rmse:,.0f} Bcf</td><td>{row.bias:+,.0f} Bcf</td></tr>"
+        for row in inventory_metrics
+    )
+    henry_rows = "".join(
+        f"<tr><td>{row.horizon_weeks} weeks</td><td>${row.mae:.2f}</td><td>${row.rmse:.2f}</td><td>{row.bias:+.2f}</td><td>{row.band_hit_rate:.1f}%</td></tr>"
+        for row in henry_metrics
+    )
+
+    recent_inventory = inventory_backtest[inventory_backtest["horizon_weeks"] == 13].tail(12).copy()
+    recent_inventory["target_period"] = pd.to_datetime(recent_inventory["target_period"])
+    inv_fig = go.Figure()
+    inv_fig.add_trace(
+        go.Scatter(
+            x=recent_inventory["target_period"],
+            y=recent_inventory["actual_inventory_bcf"],
+            mode="lines+markers",
+            line=dict(color="#111827", width=3),
+            name="Actual inventory",
+        )
+    )
+    inv_fig.add_trace(
+        go.Scatter(
+            x=recent_inventory["target_period"],
+            y=recent_inventory["base_inventory_forecast_bcf"],
+            mode="lines+markers",
+            line=dict(color="#0f766e", width=3),
+            name="Base forecast",
+        )
+    )
+    inv_fig.update_layout(
+        title="Inventory backtest: actual vs 13-week base forecast",
+        template="plotly_white",
+        height=360,
+        margin=dict(l=20, r=20, t=60, b=20),
+        yaxis_title="Billion cubic feet",
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="left", x=0),
+    )
+
+    recent_price = henry_backtest[henry_backtest["horizon_weeks"] == 13].tail(12).copy()
+    recent_price["target_period"] = pd.to_datetime(recent_price["target_period"])
+    price_fig = go.Figure()
+    price_fig.add_trace(
+        go.Scatter(
+            x=recent_price["target_period"],
+            y=recent_price["severe_henry_hub_forecast"],
+            mode="lines",
+            line=dict(width=0),
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+    price_fig.add_trace(
+        go.Scatter(
+            x=recent_price["target_period"],
+            y=recent_price["mild_henry_hub_forecast"],
+            mode="lines",
+            fill="tonexty",
+            fillcolor="rgba(37,99,235,0.14)",
+            line=dict(width=0),
+            name="Scenario band",
+        )
+    )
+    price_fig.add_trace(
+        go.Scatter(
+            x=recent_price["target_period"],
+            y=recent_price["base_henry_hub_forecast"],
+            mode="lines+markers",
+            line=dict(color="#0f766e", width=3),
+            name="Base forecast",
+        )
+    )
+    price_fig.add_trace(
+        go.Scatter(
+            x=recent_price["target_period"],
+            y=recent_price["actual_henry_hub_price"],
+            mode="lines+markers",
+            line=dict(color="#111827", width=3),
+            name="Actual Henry Hub",
+        )
+    )
+    price_fig.update_layout(
+        title="Henry Hub backtest: actual vs 13-week scenario band",
+        template="plotly_white",
+        height=360,
+        margin=dict(l=20, r=20, t=60, b=20),
+        yaxis_title="$/MMBtu",
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="left", x=0),
+    )
+
+    inv_bias = inventory_metrics[0].bias if inventory_metrics else np.nan
+    price_hit = henry_metrics[0].band_hit_rate if henry_metrics else np.nan
+    tuning_text = ""
+    if np.isfinite(inv_bias):
+        if inv_bias > 40:
+            tuning_text += f" The inventory model currently under-forecasts storage on average by about {inv_bias:,.0f} Bcf at its shortest scored horizon, which suggests the seasonal build profile or weather beta may be too conservative."
+        elif inv_bias < -40:
+            tuning_text += f" The inventory model currently over-forecasts storage on average by about {abs(inv_bias):,.0f} Bcf at its shortest scored horizon, which suggests the seasonal build profile may be too aggressive."
+    if np.isfinite(price_hit):
+        tuning_text += f" The Henry Hub scenario band contains realized prices {price_hit:.1f}% of the time at the 13-week horizon, which is the practical score to watch as we recalibrate the storage-price mapping."
+
+    return f"""
+    <section class="panel">
+      <h2>Forecast accuracy</h2>
+      <p>This section scores the outlook engine on a rolling historical backtest. The inventory model is judged on base-case forecast error, while Henry Hub is judged both on base-case error and on whether the realized price stayed inside the mild-to-severe scenario band. This gives us a tuning loop rather than a static forecast.{tuning_text}</p>
+      {inv_fig.to_html(full_html=False, include_plotlyjs=False)}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Inventory horizon</th><th>MAE</th><th>RMSE</th><th>Bias</th></tr></thead>
+          <tbody>{inv_rows}</tbody>
+        </table>
+      </div>
+      {price_fig.to_html(full_html=False, include_plotlyjs=False)}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Henry Hub horizon</th><th>MAE</th><th>RMSE</th><th>Bias</th><th>Scenario band hit-rate</th></tr></thead>
+          <tbody>{henry_rows}</tbody>
         </table>
       </div>
     </section>
@@ -1896,6 +2049,7 @@ def html_page(
     </section>
 
     {outlook_section_html(df, weather_hdd_df, market_close)}
+    {forecast_accuracy_section_html(evt_inventory_df, weather_hdd_df, market_close)}
 
     <section class="panel">
       <h2>Decomposition</h2>

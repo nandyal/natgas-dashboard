@@ -20,6 +20,8 @@ FULL_HISTORY_INVENTORY_CSV = "eia_ng_total_inventory_full_history.csv"
 NOAA_HDD_CSV = Path("HDD data") / "noaa_weekly_hdd.csv"
 NOAA_HDD_FULL_HISTORY_CSV = Path("HDD data") / "noaa_weekly_hdd_full_history.csv"
 NOAA_HDD_EXAMPLE_CSV = Path("HDD data") / "example_noaa_hdd_data.csv"
+OUTLOOK_INVENTORY_HISTORY_CSV = "outlook_inventory_forecast_history.csv"
+OUTLOOK_HENRY_HUB_HISTORY_CSV = "outlook_henry_hub_forecast_history.csv"
 DEFAULT_TICKERS = ["NG=F", "RRC", "AR", "EQT", "CNX", "UNG", "USO", "FTI"]
 PORTFOLIO_TICKERS = ["RRC", "AR", "EQT", "CNX", "UNG", "USO"]
 
@@ -55,6 +57,15 @@ class OutlookScenarioSummary:
     max_inventory_bcf: float
     end_henry_hub_price: float
     avg_henry_hub_price: float
+
+
+@dataclass(frozen=True)
+class ForecastMetricSummary:
+    horizon_weeks: int
+    mae: float
+    rmse: float
+    bias: float
+    band_hit_rate: float | None = None
 
 
 def load_inventory_data(base_dir: Path) -> pd.DataFrame:
@@ -533,6 +544,202 @@ def build_outlook_summary(
             )
         )
     return summaries
+
+
+def save_outlook_snapshots(
+    base_dir: Path,
+    inventory_scenarios_df: pd.DataFrame,
+    henry_hub_scenarios_df: pd.DataFrame,
+    as_of_date: pd.Timestamp,
+) -> None:
+    inventory_path = base_dir / OUTLOOK_INVENTORY_HISTORY_CSV
+    henry_path = base_dir / OUTLOOK_HENRY_HUB_HISTORY_CSV
+
+    inventory_snapshot = inventory_scenarios_df.copy()
+    inventory_snapshot["as_of_date"] = pd.Timestamp(as_of_date).strftime("%Y-%m-%d")
+    inventory_snapshot["period"] = pd.to_datetime(inventory_snapshot["period"]).dt.strftime("%Y-%m-%d")
+
+    henry_snapshot = henry_hub_scenarios_df.copy()
+    henry_snapshot["as_of_date"] = pd.Timestamp(as_of_date).strftime("%Y-%m-%d")
+    henry_snapshot["period"] = pd.to_datetime(henry_snapshot["period"]).dt.strftime("%Y-%m-%d")
+
+    for path, snapshot, keys in [
+        (inventory_path, inventory_snapshot, ["as_of_date", "scenario", "period"]),
+        (henry_path, henry_snapshot, ["as_of_date", "scenario", "period"]),
+    ]:
+        if path.exists():
+            existing = pd.read_csv(path)
+            combined = pd.concat([existing, snapshot], ignore_index=True, sort=False)
+        else:
+            combined = snapshot
+        combined = combined.drop_duplicates(subset=keys, keep="last")
+        combined = combined.sort_values(keys).reset_index(drop=True)
+        combined.to_csv(path, index=False)
+
+
+def _outlook_inputs_as_of(
+    inventory_df: pd.DataFrame,
+    hdd_merged_df: pd.DataFrame,
+    market_close: pd.DataFrame,
+    as_of_date: pd.Timestamp,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    inventory_slice = inventory_df[pd.to_datetime(inventory_df["period"]) <= pd.Timestamp(as_of_date)].copy()
+    weather_slice = hdd_merged_df[pd.to_datetime(hdd_merged_df["period"]) <= pd.Timestamp(as_of_date)].copy()
+    market_slice = market_close.loc[market_close.index <= pd.Timestamp(as_of_date)].copy()
+    return inventory_slice, weather_slice, market_slice
+
+
+def backtest_outlook_models(
+    inventory_df: pd.DataFrame,
+    hdd_merged_df: pd.DataFrame,
+    market_close: pd.DataFrame,
+    horizons: tuple[int, ...] = (13, 52),
+    step_weeks: int = 4,
+    lookback_years: int = 5,
+) -> dict[str, pd.DataFrame]:
+    inventory = inventory_df.copy().sort_values("period").reset_index(drop=True)
+    inventory["period"] = pd.to_datetime(inventory["period"])
+    max_horizon = max(horizons)
+    end_cutoff = inventory["period"].max() - pd.Timedelta(weeks=max_horizon)
+    start_cutoff = max(
+        inventory["period"].min() + pd.Timedelta(weeks=156),
+        inventory["period"].max() - pd.Timedelta(days=365 * lookback_years),
+    )
+    as_of_dates = inventory[
+        (inventory["period"] >= start_cutoff) & (inventory["period"] <= end_cutoff)
+    ]["period"].iloc[::step_weeks]
+
+    ng_weekly = market_close["NG=F"].dropna().resample("W-FRI").last().dropna() if "NG=F" in market_close.columns else pd.Series(dtype=float)
+    inventory_rows: list[dict[str, float | str]] = []
+    henry_rows: list[dict[str, float | str]] = []
+
+    for as_of_date in as_of_dates:
+        inventory_slice, weather_slice, market_slice = _outlook_inputs_as_of(
+            inventory,
+            hdd_merged_df,
+            market_close,
+            as_of_date,
+        )
+        if len(inventory_slice) < 156 or len(weather_slice) < 156 or market_slice.empty:
+            continue
+        try:
+            inventory_scenarios = inventory_outlook_scenarios(inventory_slice, weather_slice, horizon=max_horizon)
+            henry_scenarios = henry_hub_outlook_scenarios(inventory_slice, inventory_scenarios, market_slice)
+        except Exception:
+            continue
+
+        for horizon in horizons:
+            target_period = pd.Timestamp(as_of_date) + pd.Timedelta(weeks=horizon)
+            actual_inventory_row = inventory[inventory["period"] == target_period]
+            actual_price = float(ng_weekly.loc[target_period]) if target_period in ng_weekly.index else np.nan
+            if actual_inventory_row.empty:
+                continue
+            actual_inventory = float(actual_inventory_row["value_bcf"].iloc[0])
+
+            base_inventory = inventory_scenarios[
+                (inventory_scenarios["scenario"] == "Base")
+                & (pd.to_datetime(inventory_scenarios["period"]) == target_period)
+            ]
+            mild_inventory = inventory_scenarios[
+                (inventory_scenarios["scenario"] == "Mild")
+                & (pd.to_datetime(inventory_scenarios["period"]) == target_period)
+            ]
+            severe_inventory = inventory_scenarios[
+                (inventory_scenarios["scenario"] == "Severe")
+                & (pd.to_datetime(inventory_scenarios["period"]) == target_period)
+            ]
+            if base_inventory.empty or mild_inventory.empty or severe_inventory.empty:
+                continue
+            base_forecast = float(base_inventory["forecast_inventory_bcf"].iloc[0])
+            mild_forecast = float(mild_inventory["forecast_inventory_bcf"].iloc[0])
+            severe_forecast = float(severe_inventory["forecast_inventory_bcf"].iloc[0])
+            inventory_rows.append(
+                {
+                    "as_of_date": pd.Timestamp(as_of_date).strftime("%Y-%m-%d"),
+                    "target_period": target_period.strftime("%Y-%m-%d"),
+                    "horizon_weeks": horizon,
+                    "actual_inventory_bcf": actual_inventory,
+                    "base_inventory_forecast_bcf": base_forecast,
+                    "mild_inventory_forecast_bcf": mild_forecast,
+                    "severe_inventory_forecast_bcf": severe_forecast,
+                    "inventory_error_bcf": actual_inventory - base_forecast,
+                }
+            )
+
+            base_price_row = henry_scenarios[
+                (henry_scenarios["scenario"] == "Base")
+                & (pd.to_datetime(henry_scenarios["period"]) == target_period)
+            ]
+            mild_price_row = henry_scenarios[
+                (henry_scenarios["scenario"] == "Mild")
+                & (pd.to_datetime(henry_scenarios["period"]) == target_period)
+            ]
+            severe_price_row = henry_scenarios[
+                (henry_scenarios["scenario"] == "Severe")
+                & (pd.to_datetime(henry_scenarios["period"]) == target_period)
+            ]
+            if base_price_row.empty or mild_price_row.empty or severe_price_row.empty or np.isnan(actual_price):
+                continue
+            base_price = float(base_price_row["forecast_henry_hub_price"].iloc[0])
+            mild_price = float(mild_price_row["forecast_henry_hub_price"].iloc[0])
+            severe_price = float(severe_price_row["forecast_henry_hub_price"].iloc[0])
+            low_band = min(mild_price, severe_price, base_price)
+            high_band = max(mild_price, severe_price, base_price)
+            henry_rows.append(
+                {
+                    "as_of_date": pd.Timestamp(as_of_date).strftime("%Y-%m-%d"),
+                    "target_period": target_period.strftime("%Y-%m-%d"),
+                    "horizon_weeks": horizon,
+                    "actual_henry_hub_price": actual_price,
+                    "base_henry_hub_forecast": base_price,
+                    "mild_henry_hub_forecast": mild_price,
+                    "severe_henry_hub_forecast": severe_price,
+                    "price_error": actual_price - base_price,
+                    "within_scenario_band": bool(low_band <= actual_price <= high_band),
+                }
+            )
+
+    inventory_backtest = pd.DataFrame(inventory_rows)
+    henry_backtest = pd.DataFrame(henry_rows)
+    return {
+        "inventory_backtest": inventory_backtest,
+        "henry_backtest": henry_backtest,
+    }
+
+
+def summarize_inventory_backtest(backtest_df: pd.DataFrame) -> list[ForecastMetricSummary]:
+    if backtest_df.empty:
+        return []
+    rows: list[ForecastMetricSummary] = []
+    for horizon, group in backtest_df.groupby("horizon_weeks"):
+        errors = group["inventory_error_bcf"].astype(float)
+        rows.append(
+            ForecastMetricSummary(
+                horizon_weeks=int(horizon),
+                mae=float(errors.abs().mean()),
+                rmse=float(np.sqrt(np.mean(np.square(errors)))),
+                bias=float(errors.mean()),
+            )
+        )
+    return rows
+
+
+def summarize_henry_hub_backtest(backtest_df: pd.DataFrame) -> list[ForecastMetricSummary]:
+    if backtest_df.empty:
+        return []
+    rows: list[ForecastMetricSummary] = []
+    for horizon, group in backtest_df.groupby("horizon_weeks"):
+        errors = group["price_error"].astype(float)
+        rows.append(
+            ForecastMetricSummary(
+                horizon_weeks=int(horizon),
+                mae=float(errors.abs().mean()),
+                rmse=float(np.sqrt(np.mean(np.square(errors)))),
+                bias=float(errors.mean()),
+                band_hit_rate=float(group["within_scenario_band"].mean() * 100),
+            )
+        )
+    return rows
 
 
 def inventory_decomposition(df: pd.DataFrame):
