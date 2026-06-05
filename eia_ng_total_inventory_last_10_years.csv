@@ -1,8 +1,4 @@
 period,value_bcf,units,series,description
-2016-05-13,2754,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
-2016-05-20,2825,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
-2016-05-27,2907,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
-2016-06-03,2972,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
 2016-06-10,3041,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
 2016-06-17,3103,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
 2016-06-24,3140,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
@@ -520,3 +516,7 @@ period,value_bcf,units,series,description
 2026-04-17,2063,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
 2026-04-24,2142,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
 2026-05-01,2205,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
+2026-05-08,2290,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
+2026-05-15,2391,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
+2026-05-22,2483,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)
+2026-05-29,2578,BCF,NW2_EPG0_SWO_R48_BCF,Weekly Lower 48 States Natural Gas Working Underground Storage (Billion Cubic Feet)

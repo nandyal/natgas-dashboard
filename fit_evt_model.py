@@ -31,7 +31,7 @@ def stl_decompose(series: pd.Series):
     return STL(series, period=52, seasonal=53, trend=53, robust=True).fit()
 
 
-def inventory_innovations(residual: pd.Series, ar_lags: int = 4) -> tuple[pd.Series, object]:
+def inventory_innovations(residual: pd.Series, ar_lags: int = 5) -> tuple[pd.Series, object]:
     clean = pd.Series(residual).dropna().astype(float)
     ar_model = AutoReg(clean, lags=ar_lags, old_names=False).fit()
     innovations = pd.Series(ar_model.resid, index=clean.index).dropna()
@@ -137,7 +137,7 @@ def main() -> int:
     series = load_inventory_series(INPUT_CSV)
     stl_fit = stl_decompose(series)
     residual = pd.Series(stl_fit.resid, index=series.index).dropna()
-    innovations, ar_model = inventory_innovations(residual, ar_lags=4)
+    innovations, ar_model = inventory_innovations(residual, ar_lags=5)
     residual_shocks = residual.abs()
 
     mep = mean_excess_frame(residual_shocks, THRESHOLD_BCF)
@@ -160,7 +160,7 @@ def main() -> int:
         "coverage_start": series.index.min().strftime("%Y-%m-%d"),
         "coverage_end": series.index.max().strftime("%Y-%m-%d"),
         "stl_period_weeks": 52,
-        "ar_lags": 4,
+        "ar_lags": 5,
         "evt_fit_series": "absolute STL residual shocks",
         "threshold_bcf": THRESHOLD_BCF,
         "shape_xi": float(fit["shape_xi"]),
@@ -186,7 +186,7 @@ def main() -> int:
     print(f"Shape xi: {summary['shape_xi']:.6f}")
     print(f"Scale sigma: {summary['scale_sigma']:.6f}")
     print(f"Exceedances: {summary['n_exceedances']} of {summary['n_observations']}")
-    print(f"AR(4) innovation exceedances above 149 Bcf: {summary['innovation_threshold_exceedances_gt_149_bcf']}")
+    print(f"AR(5) innovation exceedances above 149 Bcf: {summary['innovation_threshold_exceedances_gt_149_bcf']}")
     print(f"Ljung-Box p-value (13 lags): {summary['ljung_box_pvalue_13']:.4f}")
     print(f"Ljung-Box p-value (26 lags): {summary['ljung_box_pvalue_26']:.4f}")
     print(f"Wrote {MEP_PLOT}")

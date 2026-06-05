@@ -264,7 +264,7 @@ def decomposition_analysis_html(df: pd.DataFrame) -> str:
         .index.tolist()
     )
     noise_interpretation = (
-        "The remaining Noise passes this white-noise check at the 5% level, so the STL plus AR(4) residual filter is absorbing most of the visible short-run structure."
+        "The remaining Noise passes this white-noise check at the 5% level, so the STL plus AR(5) residual filter is absorbing most of the visible short-run structure."
         if noise_lb.loc[13, "lb_pvalue"] > 0.05 and noise_lb.loc[26, "lb_pvalue"] > 0.05
         else "The remaining Noise still shows serial dependence, so the decomposition should be treated as an incomplete split rather than a pure white-noise model."
     )

@@ -1,0 +1,48 @@
+{
+  "coverage_start": "1993-12-31",
+  "coverage_end": "2026-05-08",
+  "stl_residual_count": 1689,
+  "ranking_basis": "Higher clean_score is better. Score rewards higher Ljung-Box p-values at 13 and 26 lags and penalizes the largest absolute autocorrelation across lags 1-13.",
+  "best_model": "AR(5)",
+  "results": [
+    {
+      "model_name": "AR(5)",
+      "aic": 16672.922968542553,
+      "bic": 16710.925458906167,
+      "innovation_count": 1684,
+      "innovation_std_bcf": 34.04198115795646,
+      "acf_lag_1": -0.0003389580221157415,
+      "acf_lag_5": 0.02051567121540494,
+      "max_abs_acf_1_13": 0.05094163899855624,
+      "ljung_box_pvalue_13": 0.5676348107530222,
+      "ljung_box_pvalue_26": 0.3500413122226827,
+      "clean_score": 0.40786009143921165
+    },
+    {
+      "model_name": "ARIMA(4,0,1)",
+      "aic": 16682.825268651166,
+      "bic": 16715.402393707885,
+      "innovation_count": 1689,
+      "innovation_std_bcf": 34.118733868872994,
+      "acf_lag_1": 0.0010626200144374033,
+      "acf_lag_5": 0.02402819543858787,
+      "max_abs_acf_1_13": 0.04151174535525329,
+      "ljung_box_pvalue_13": 0.5326355292198133,
+      "ljung_box_pvalue_26": 0.31743403572951473,
+      "clean_score": 0.3783801296916723
+    },
+    {
+      "model_name": "AR(4)",
+      "aic": 16683.299201925824,
+      "bic": 16715.876326982543,
+      "innovation_count": 1685,
+      "innovation_std_bcf": 34.06707406001022,
+      "acf_lag_1": 0.0005186688436927258,
+      "acf_lag_5": 0.023429153239124707,
+      "max_abs_acf_1_13": 0.04571072999146869,
+      "ljung_box_pvalue_13": 0.5049981878710973,
+      "ljung_box_pvalue_26": 0.29481405642940545,
+      "clean_score": 0.35534443693607937
+    }
+  ]
+}

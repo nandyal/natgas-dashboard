@@ -366,7 +366,7 @@ def inventory_decomposition(df: pd.DataFrame):
 def split_residual_components(
     residual: pd.Series,
     window: int = 4,
-    ar_lags: int = 4,
+    ar_lags: int = 5,
 ) -> tuple[pd.Series, pd.Series]:
     clean = residual.dropna().copy()
     rolling_structured = clean.rolling(window=window, center=True, min_periods=1).mean()
