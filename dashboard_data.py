@@ -46,6 +46,17 @@ class PortfolioSummary:
     sharpe_ratio: float
 
 
+@dataclass(frozen=True)
+class OutlookScenarioSummary:
+    scenario: str
+    hdd_assumption: str
+    end_inventory_bcf: float
+    min_inventory_bcf: float
+    max_inventory_bcf: float
+    end_henry_hub_price: float
+    avg_henry_hub_price: float
+
+
 def load_inventory_data(base_dir: Path) -> pd.DataFrame:
     path = base_dir / INVENTORY_CSV
     df = pd.read_csv(path, parse_dates=["period"])
@@ -355,6 +366,173 @@ def seasonal_naive_inventory_forecast(df: pd.DataFrame, horizon: int = 13) -> pd
 
     forecast = pd.DataFrame({"period": future_dates, "forecast_bcf": repeated_values})
     return forecast
+
+
+def inventory_outlook_scenarios(
+    inventory_df: pd.DataFrame,
+    hdd_merged_df: pd.DataFrame,
+    horizon: int = 52,
+) -> pd.DataFrame:
+    inventory = inventory_df.copy().sort_values("period").reset_index(drop=True)
+    merged = hdd_merged_df.copy().sort_values("period").reset_index(drop=True)
+    merged["weekly_change_bcf"] = merged["value_bcf"].diff()
+    merged = merged.dropna(subset=["weekly_change_bcf", "hdd_anomaly"]).copy()
+    if len(merged) < 104:
+        raise ValueError("Need at least two years of merged inventory and HDD history for the outlook.")
+
+    seasonal_change = merged.groupby("week_of_year")["weekly_change_bcf"].mean()
+    week_anomaly_stats = (
+        merged.groupby("week_of_year")["hdd_anomaly"]
+        .agg(
+            mild=lambda s: float(s.quantile(0.25)),
+            base=lambda s: float(s.quantile(0.50)),
+            severe=lambda s: float(s.quantile(0.75)),
+        )
+        .fillna(0.0)
+    )
+    overall_quantiles = merged["hdd_anomaly"].quantile([0.25, 0.50, 0.75]).to_dict()
+    anomaly_mean = float(merged["hdd_anomaly"].mean())
+    anomaly_var = float(merged["hdd_anomaly"].var())
+    if anomaly_var <= 0 or np.isnan(anomaly_var):
+        weather_beta = 0.0
+    else:
+        unexpected_change = merged["weekly_change_bcf"] - merged["week_of_year"].map(seasonal_change)
+        weather_beta = float(np.cov(unexpected_change, merged["hdd_anomaly"], ddof=1)[0, 1] / anomaly_var)
+
+    latest_period = pd.Timestamp(inventory["period"].max())
+    latest_inventory = float(inventory["value_bcf"].iloc[-1])
+    future_dates = pd.date_range(latest_period + pd.Timedelta(days=7), periods=horizon, freq="W-FRI")
+    scenarios = {
+        "Mild": ("Mild weather", "mild"),
+        "Base": ("Seasonal-normal weather", "base"),
+        "Severe": ("Severe weather", "severe"),
+    }
+
+    rows: list[dict[str, float | str | pd.Timestamp]] = []
+    for scenario_name, (assumption_text, anomaly_key) in scenarios.items():
+        running_inventory = latest_inventory
+        for period in future_dates:
+            week = int(period.isocalendar().week)
+            base_change = float(seasonal_change.get(week, merged["weekly_change_bcf"].mean()))
+            row = week_anomaly_stats.loc[week] if week in week_anomaly_stats.index else None
+            scenario_anomaly = (
+                float(row[anomaly_key])
+                if row is not None and pd.notna(row[anomaly_key])
+                else float(overall_quantiles[{ "mild": 0.25, "base": 0.50, "severe": 0.75 }[anomaly_key]])
+            )
+            adjusted_change = base_change + weather_beta * (scenario_anomaly - anomaly_mean)
+            running_inventory += adjusted_change
+            rows.append(
+                {
+                    "period": period,
+                    "scenario": scenario_name,
+                    "hdd_assumption": assumption_text,
+                    "week_of_year": week,
+                    "forecast_weekly_change_bcf": float(adjusted_change),
+                    "forecast_inventory_bcf": float(running_inventory),
+                    "assumed_hdd_anomaly": float(scenario_anomaly),
+                    "weather_beta": float(weather_beta),
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def henry_hub_outlook_scenarios(
+    inventory_df: pd.DataFrame,
+    inventory_scenarios_df: pd.DataFrame,
+    market_close: pd.DataFrame,
+    adjustment_speed: float = 0.35,
+) -> pd.DataFrame:
+    if "NG=F" not in market_close.columns:
+        raise ValueError("NG=F prices are required for the Henry Hub outlook.")
+
+    ng_weekly = market_close["NG=F"].dropna().resample("W-FRI").last().dropna()
+    if len(ng_weekly) < 104:
+        raise ValueError("Need at least two years of NG=F history for the Henry Hub outlook.")
+
+    inventory = inventory_df.copy().sort_values("period").reset_index(drop=True)
+    inventory["week_of_year"] = inventory["period"].dt.isocalendar().week.astype(int)
+    seasonal_inventory = inventory.groupby("week_of_year")["value_bcf"].agg(["mean", "std"])
+
+    history = pd.DataFrame({"period": ng_weekly.index, "ng_price": ng_weekly.values})
+    history["period"] = pd.to_datetime(history["period"]).astype("datetime64[ns]")
+    inventory["period"] = pd.to_datetime(inventory["period"]).astype("datetime64[ns]")
+    merged = pd.merge_asof(
+        history.sort_values("period"),
+        inventory[["period", "value_bcf", "week_of_year"]].sort_values("period"),
+        on="period",
+        direction="nearest",
+        tolerance=pd.Timedelta(days=3),
+    ).dropna(subset=["value_bcf"])
+    merged["log_price"] = np.log(merged["ng_price"].clip(lower=0.01))
+    merged["seasonal_log_price"] = merged.groupby("week_of_year")["log_price"].transform("mean")
+    merged["inventory_week_avg"] = merged["week_of_year"].map(seasonal_inventory["mean"])
+    merged["inventory_week_std"] = merged["week_of_year"].map(seasonal_inventory["std"]).replace(0, np.nan)
+    merged["storage_gap_z"] = (
+        (merged["value_bcf"] - merged["inventory_week_avg"]) / merged["inventory_week_std"]
+    ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    price_anomaly = merged["log_price"] - merged["seasonal_log_price"]
+    gap_var = float(merged["storage_gap_z"].var())
+    storage_beta = (
+        float(np.cov(price_anomaly, merged["storage_gap_z"], ddof=1)[0, 1] / gap_var)
+        if gap_var > 0 and not np.isnan(gap_var)
+        else 0.0
+    )
+
+    seasonal_log_curve = merged.groupby("week_of_year")["log_price"].mean()
+    latest_price = float(ng_weekly.iloc[-1])
+    rows: list[dict[str, float | str | pd.Timestamp]] = []
+
+    for scenario_name, scenario_df in inventory_scenarios_df.groupby("scenario"):
+        running_log_price = float(np.log(max(latest_price, 0.01)))
+        ordered = scenario_df.sort_values("period").copy()
+        for row in ordered.itertuples():
+            week = int(row.week_of_year)
+            seasonal_log_price = float(seasonal_log_curve.get(week, merged["log_price"].mean()))
+            inventory_mean = float(seasonal_inventory["mean"].get(week, inventory["value_bcf"].mean()))
+            inventory_std = float(seasonal_inventory["std"].get(week, inventory["value_bcf"].std()))
+            inventory_std = inventory_std if inventory_std > 0 and np.isfinite(inventory_std) else float(inventory["value_bcf"].std())
+            storage_gap_z = float((row.forecast_inventory_bcf - inventory_mean) / inventory_std) if inventory_std > 0 else 0.0
+            fair_log_price = seasonal_log_price + storage_beta * storage_gap_z
+            running_log_price = running_log_price + adjustment_speed * (fair_log_price - running_log_price)
+            rows.append(
+                {
+                    "period": row.period,
+                    "scenario": scenario_name,
+                    "week_of_year": week,
+                    "forecast_inventory_bcf": float(row.forecast_inventory_bcf),
+                    "storage_gap_z": storage_gap_z,
+                    "fair_henry_hub_price": float(np.exp(fair_log_price)),
+                    "forecast_henry_hub_price": float(np.exp(running_log_price)),
+                    "storage_beta": float(storage_beta),
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def build_outlook_summary(
+    inventory_scenarios_df: pd.DataFrame,
+    henry_hub_scenarios_df: pd.DataFrame,
+) -> list[OutlookScenarioSummary]:
+    summaries: list[OutlookScenarioSummary] = []
+    for scenario_name, inventory_part in inventory_scenarios_df.groupby("scenario"):
+        price_part = henry_hub_scenarios_df[henry_hub_scenarios_df["scenario"] == scenario_name].copy()
+        if price_part.empty:
+            continue
+        summaries.append(
+            OutlookScenarioSummary(
+                scenario=scenario_name,
+                hdd_assumption=str(inventory_part["hdd_assumption"].iloc[0]),
+                end_inventory_bcf=float(inventory_part["forecast_inventory_bcf"].iloc[-1]),
+                min_inventory_bcf=float(inventory_part["forecast_inventory_bcf"].min()),
+                max_inventory_bcf=float(inventory_part["forecast_inventory_bcf"].max()),
+                end_henry_hub_price=float(price_part["forecast_henry_hub_price"].iloc[-1]),
+                avg_henry_hub_price=float(price_part["forecast_henry_hub_price"].mean()),
+            )
+        )
+    return summaries
 
 
 def inventory_decomposition(df: pd.DataFrame):

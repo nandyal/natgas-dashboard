@@ -16,10 +16,13 @@ from dashboard_data import (
     DEFAULT_TICKERS,
     PORTFOLIO_TICKERS,
     build_optimized_portfolio,
+    build_outlook_summary,
     calendar_return_table,
     correlation_matrix,
     fetch_market_prices,
+    henry_hub_outlook_scenarios,
     inventory_decomposition,
+    inventory_outlook_scenarios,
     load_full_inventory_data,
     load_hdd_data,
     load_inventory_data,
@@ -194,6 +197,159 @@ def seasonality_chart(df: pd.DataFrame) -> str:
         yaxis_title="Billion cubic feet",
     )
     return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def inventory_outlook_chart(
+    inventory_df: pd.DataFrame,
+    inventory_scenarios_df: pd.DataFrame,
+) -> str:
+    profile = seasonal_inventory_profile(inventory_df)
+    latest_period = pd.Timestamp(inventory_df["period"].max())
+    future = inventory_scenarios_df.sort_values("period").copy()
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=future[future["scenario"] == "Base"]["period"],
+            y=profile.set_index("week_of_year").reindex(
+                future[future["scenario"] == "Base"]["week_of_year"]
+            )["max_bcf"].values,
+            mode="lines",
+            line=dict(width=0),
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=future[future["scenario"] == "Base"]["period"],
+            y=profile.set_index("week_of_year").reindex(
+                future[future["scenario"] == "Base"]["week_of_year"]
+            )["min_bcf"].values,
+            mode="lines",
+            fill="tonexty",
+            fillcolor="rgba(15,118,110,0.12)",
+            line=dict(width=0),
+            name="Historical range",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=future[future["scenario"] == "Base"]["period"],
+            y=profile.set_index("week_of_year").reindex(
+                future[future["scenario"] == "Base"]["week_of_year"]
+            )["avg_bcf"].values,
+            mode="lines",
+            line=dict(color="#0f766e", width=2, dash="dash"),
+            name="Seasonal average",
+        )
+    )
+    history = inventory_df.tail(26)
+    fig.add_trace(
+        go.Scatter(
+            x=history["period"],
+            y=history["value_bcf"],
+            mode="lines",
+            line=dict(color="#111827", width=3),
+            name="Recent actual",
+        )
+    )
+    colors = {"Mild": "#2563eb", "Base": "#0f766e", "Severe": "#b91c1c"}
+    for scenario_name in ["Mild", "Base", "Severe"]:
+        scenario = future[future["scenario"] == scenario_name]
+        fig.add_trace(
+            go.Scatter(
+                x=scenario["period"],
+                y=scenario["forecast_inventory_bcf"],
+                mode="lines",
+                line=dict(color=colors[scenario_name], width=3),
+                name=f"{scenario_name} inventory",
+            )
+        )
+    fig.add_vline(x=latest_period, line_color="#6b7280", line_dash="dot")
+    fig.update_layout(
+        title="Next 12 months: inventory outlook scenarios",
+        template="plotly_white",
+        height=440,
+        margin=dict(l=20, r=20, t=60, b=20),
+        yaxis_title="Billion cubic feet",
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="left", x=0),
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def henry_hub_outlook_chart(henry_hub_scenarios_df: pd.DataFrame, market_close: pd.DataFrame) -> str:
+    ng_weekly = market_close["NG=F"].dropna().resample("W-FRI").last().dropna().tail(26)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=ng_weekly.index,
+            y=ng_weekly.values,
+            mode="lines",
+            line=dict(color="#111827", width=3),
+            name="Recent NG=F actual",
+        )
+    )
+    colors = {"Mild": "#2563eb", "Base": "#0f766e", "Severe": "#b91c1c"}
+    for scenario_name in ["Mild", "Base", "Severe"]:
+        scenario = henry_hub_scenarios_df[henry_hub_scenarios_df["scenario"] == scenario_name].sort_values("period")
+        fig.add_trace(
+            go.Scatter(
+                x=scenario["period"],
+                y=scenario["forecast_henry_hub_price"],
+                mode="lines",
+                line=dict(color=colors[scenario_name], width=3),
+                name=f"{scenario_name} Henry Hub",
+            )
+        )
+    fig.add_vline(x=ng_weekly.index.max(), line_color="#6b7280", line_dash="dot")
+    fig.update_layout(
+        title="Next 12 months: Henry Hub scenario paths",
+        template="plotly_white",
+        height=420,
+        margin=dict(l=20, r=20, t=60, b=20),
+        yaxis_title="$/MMBtu",
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="left", x=0),
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False)
+
+
+def outlook_section_html(
+    inventory_df: pd.DataFrame,
+    weather_hdd_df: pd.DataFrame,
+    market_close: pd.DataFrame,
+) -> str:
+    if weather_hdd_df.empty or "NG=F" not in market_close.columns:
+        return ""
+    try:
+        inventory_scenarios = inventory_outlook_scenarios(inventory_df, weather_hdd_df, horizon=52)
+        henry_hub_scenarios = henry_hub_outlook_scenarios(inventory_df, inventory_scenarios, market_close)
+        summary_rows = build_outlook_summary(inventory_scenarios, henry_hub_scenarios)
+    except Exception:
+        return ""
+
+    rows = "".join(
+        f"<tr><td>{row.scenario}</td><td>{row.hdd_assumption}</td><td>{row.end_inventory_bcf:,.0f} Bcf</td><td>{row.min_inventory_bcf:,.0f} Bcf</td><td>{row.max_inventory_bcf:,.0f} Bcf</td><td>${row.end_henry_hub_price:.2f}</td><td>${row.avg_henry_hub_price:.2f}</td></tr>"
+        for row in summary_rows
+    )
+    latest_storage = float(inventory_df["value_bcf"].iloc[-1])
+    beta_text = float(inventory_scenarios["weather_beta"].iloc[0]) if not inventory_scenarios.empty else np.nan
+    storage_beta = float(henry_hub_scenarios["storage_beta"].iloc[0]) if not henry_hub_scenarios.empty else np.nan
+    return f"""
+    <section class="panel">
+      <h2>Next 12-month outlook</h2>
+      <p>This section separates what is reasonably forecastable from what is not. Storage is projected weekly for the next year using seasonal storage behavior plus a weather-shock adjustment from historical HDD anomalies. Henry Hub is then shown as a <strong>scenario path</strong> tied to the projected storage balance, not as a single precise point forecast.</p>
+      <p class="small">Current storage starts from <strong>{latest_storage:,.0f} Bcf</strong>. The inventory engine applies a weather-response coefficient of <strong>{beta_text:.2f} Bcf per HDD-anomaly unit</strong> to the seasonal weekly storage change. The Henry Hub layer uses a storage-implied fair-value relationship, with prices mean-reverting toward a seasonal fair value adjusted by projected storage surplus or deficit (<strong>storage beta {storage_beta:.2f}</strong> in log-price terms).</p>
+      {inventory_outlook_chart(inventory_df, inventory_scenarios)}
+      {henry_hub_outlook_chart(henry_hub_scenarios, market_close)}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Scenario</th><th>Weather assumption</th><th>End inventory</th><th>12m minimum</th><th>12m maximum</th><th>End Henry Hub</th><th>Avg Henry Hub</th></tr></thead>
+          <tbody>{rows}</tbody>
+        </table>
+      </div>
+    </section>
+    """
 
 
 def decomposition_chart(df: pd.DataFrame) -> str:
@@ -1738,6 +1894,8 @@ def html_page(
       <p>This table summarizes the latest total storage level against last week, the same point last year, and the rolling one-year average.</p>
       {lower48_table(df)}
     </section>
+
+    {outlook_section_html(df, weather_hdd_df, market_close)}
 
     <section class="panel">
       <h2>Decomposition</h2>
