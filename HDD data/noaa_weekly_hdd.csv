@@ -1,12 +1,4 @@
 date,week_ending,noaa_file_date,us_hdd_weekly,hdd_deviation_from_normal,hdd_deviation_from_last_year,new_england_hdd_weekly,middle_atlantic_hdd_weekly,east_n_central_hdd_weekly,west_n_central_hdd_weekly,east_hdd_weekly,midwest_hdd_weekly,east_hdd_deviation_from_normal,midwest_hdd_deviation_from_normal,noaa_section_used,week_of_year,us_hdd_weekly_normal_10y,us_hdd_weekly_anomaly_10y,us_hdd_weekly_std_10y,us_hdd_weekly_zscore_10y,us_hdd_weekly_normal_30y,us_hdd_weekly_anomaly_30y,us_hdd_weekly_std_30y,us_hdd_weekly_zscore_30y,us_hdd_normal,us_hdd_anomaly,us_hdd_std,us_hdd_zscore,east_hdd_weekly_normal_10y,east_hdd_weekly_anomaly_10y,east_hdd_weekly_std_10y,east_hdd_weekly_zscore_10y,east_hdd_weekly_normal_30y,east_hdd_weekly_anomaly_30y,east_hdd_weekly_std_30y,east_hdd_weekly_zscore_30y,east_hdd_normal,east_hdd_anomaly,east_hdd_std,east_hdd_zscore,midwest_hdd_weekly_normal_10y,midwest_hdd_weekly_anomaly_10y,midwest_hdd_weekly_std_10y,midwest_hdd_weekly_zscore_10y,midwest_hdd_weekly_normal_30y,midwest_hdd_weekly_anomaly_30y,midwest_hdd_weekly_std_30y,midwest_hdd_weekly_zscore_30y,midwest_hdd_normal,midwest_hdd_anomaly,midwest_hdd_std,midwest_hdd_zscore,hdd_normal,hdd_anomaly,hdd_std,hdd_zscore,extreme_hdd_week
-2016-07-01,20160701,20160701,0.0,0.0,-3.0,0.0,0.0,1.0,4.0,0.0,2.5,-3.5,-0.5,UTILITY GAS CUSTOMER HEATING WEIGHTED,26,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
-2016-07-08,20160708,20160708,0.0,0.0,-1.0,0.0,0.0,2.0,2.0,0.0,2.0,-1.5,1.5,UTILITY GAS CUSTOMER HEATING WEIGHTED,27,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
-2016-07-15,20160715,20160715,0.0,0.0,0.0,3.0,0.0,0.0,0.0,1.5,0.0,1.5,0.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,28,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
-2016-07-22,20160722,20160722,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,29,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
-2016-07-29,20160729,20160729,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,30,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
-2016-08-05,20160805,20160805,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,31,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
-2016-08-12,20160812,20160812,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,-2.5,UTILITY GAS CUSTOMER HEATING WEIGHTED,32,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
-2016-08-19,20160819,20160819,0.0,0.0,-1.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,-2.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,33,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
 2016-08-26,20160826,20160826,0.0,0.0,-4.0,0.0,0.0,0.0,4.0,0.0,2.0,-5.0,0.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,34,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
 2016-09-02,20160902,20160902,0.0,-6.0,-1.0,0.0,0.0,0.0,3.0,0.0,1.5,-6.5,-5.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,35,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
 2016-09-09,20160909,20160909,0.0,-7.0,-3.0,0.0,0.0,0.0,1.0,0.0,0.5,-12.0,-10.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,36,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
@@ -519,3 +511,12 @@ date,week_ending,noaa_file_date,us_hdd_weekly,hdd_deviation_from_normal,hdd_devi
 2026-05-29,20260529,20260529,21.0,-5.0,-17.0,37.0,33.0,9.0,5.0,35.0,7.0,0.5,-23.5,UTILITY GAS CUSTOMER HEATING WEIGHTED,22,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
 2026-06-05,20260605,20260605,12.0,-6.0,-3.0,45.0,26.0,10.0,1.0,35.5,5.5,12.0,-15.5,UTILITY GAS CUSTOMER HEATING WEIGHTED,23,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
 2026-06-12,20260612,20260612,5.0,-6.0,1.0,1.0,0.0,0.0,1.0,0.5,0.5,-15.0,-10.5,UTILITY GAS CUSTOMER HEATING WEIGHTED,24,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
+2026-06-19,20260619,20260619,6.0,-1.0,2.0,1.0,5.0,10.0,11.0,3.0,10.5,-6.5,3.5,UTILITY GAS CUSTOMER HEATING WEIGHTED,25,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
+2026-06-26,20260626,20260626,4.0,1.0,0.0,2.0,2.0,6.0,8.0,2.0,7.0,-3.5,3.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,26,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
+2026-07-03,20260703,20260703,4.0,4.0,4.0,0.0,0.0,0.0,0.0,0.0,0.0,-3.5,-2.5,UTILITY GAS CUSTOMER HEATING WEIGHTED,27,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
+2026-07-10,20260710,20260710,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.5,0.0,0.0,0.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,28,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
+2026-07-17,20260717,20260717,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,29,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
+2026-07-24,20260724,20260724,0.0,0.0,0.0,0.0,1.0,2.0,1.0,0.5,1.5,0.5,1.5,UTILITY GAS CUSTOMER HEATING WEIGHTED,30,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
+2026-07-31,20260731,20260731,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.5,0.0,0.5,0.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,31,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
+2026-08-07,20260807,20260807,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,-1.0,UTILITY GAS CUSTOMER HEATING WEIGHTED,32,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
+2026-08-14,20260814,20260814,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,-2.5,UTILITY GAS CUSTOMER HEATING WEIGHTED,33,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,False
