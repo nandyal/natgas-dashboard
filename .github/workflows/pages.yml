@@ -5,11 +5,11 @@ on:
     branches:
       - main
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 4 * * 0"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -20,9 +20,15 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+      FINBERT_API_KEY: ${{ secrets.FINBERT_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
@@ -37,11 +43,33 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-sentiment.txt
 
+      - name: Refresh source data
+        run: |
+          python refresh_eia_ng_inventory.py --years 10 --output-dir .
+          python refresh_eia_ng_inventory.py --full-history --output-dir .
+          python refresh_noaa_hdd.py
+          python fit_evt_model.py
+          python analyze_conditional_risk.py
+          python inventory_sentiment_analysis.py
+          python market_sentiment_analysis.py
+
       - name: Generate reports
         run: |
-          python market_sentiment_analysis.py
           python generate_static_report.py
           python generate_market_report.py
+
+      - name: Commit refreshed datasets and reports
+        if: github.event_name != 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Automated Sunday data refresh [skip ci]"
+            git push
+          fi
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
