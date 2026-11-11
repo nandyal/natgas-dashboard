@@ -43,10 +43,18 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-sentiment.txt
 
-      - name: Refresh source data
+      - name: Refresh EIA inventory data
+        if: env.EIA_API_KEY != ''
         run: |
           python refresh_eia_ng_inventory.py --years 10 --output-dir .
           python refresh_eia_ng_inventory.py --full-history --output-dir .
+
+      - name: Preserve committed EIA inventory data when no API key is configured
+        if: env.EIA_API_KEY == ''
+        run: echo "EIA_API_KEY is not configured; deploying the latest inventory datasets committed to the repository."
+
+      - name: Refresh derived data
+        run: |
           python refresh_noaa_hdd.py
           python fit_evt_model.py
           python analyze_conditional_risk.py
