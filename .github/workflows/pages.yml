@@ -54,6 +54,7 @@ jobs:
         run: echo "EIA_API_KEY is not configured; deploying the latest inventory datasets committed to the repository."
 
       - name: Refresh derived data
+        if: env.EIA_API_KEY != ''
         run: |
           python refresh_noaa_hdd.py
           python fit_evt_model.py
@@ -61,7 +62,12 @@ jobs:
           python inventory_sentiment_analysis.py
           python market_sentiment_analysis.py
 
+      - name: Preserve committed analysis when no API key is configured
+        if: env.EIA_API_KEY == ''
+        run: echo "Skipping external refreshes and deploying the committed dashboard artifacts."
+
       - name: Generate reports
+        if: env.EIA_API_KEY != ''
         run: |
           python generate_static_report.py
           python generate_market_report.py
